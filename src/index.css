@@ -1,0 +1,239 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar styles */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.5);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.8);
+}
+
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.5);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(75, 85, 99, 0.8);
+}
+
+/* Animation for typing effect */
+@keyframes typing {
+  from { width: 0 }
+  to { width: 100% }
+}
+
+/* Animation for loading dots */
+@keyframes bounce {
+  0%, 80%, 100% {
+    transform: scale(0);
+  }
+  40% {
+    transform: scale(1);
+  }
+}
+
+/* Animation for modal fade in */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Animation for modal scale in */
+@keyframes scaleIn {
+  from { transform: scale(0.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+
+
+/* Animation classes */
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out forwards;
+}
+
+/* Chat bubble specific styles */
+.chat-bubble {
+  @apply rounded-2xl px-6 py-4 shadow-lg transition-all duration-200;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.chat-bubble-user {
+  @apply bg-gradient-to-br from-sky-500 to-blue-600 text-white border border-sky-400;
+  box-shadow: 0 4px 14px 0 rgba(14, 165, 233, 0.3);
+}
+
+.chat-bubble-ai {
+  @apply bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-slate-700;
+  box-shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.1);
+}
+
+.dark .chat-bubble-ai {
+  box-shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.3);
+}
+
+.chat-bubble-timestamp {
+  @apply text-xs text-gray-500 dark:text-gray-400 mt-2;
+}
+
+/* Ensure proper text contrast in chat bubbles */
+.chat-bubble-user .markdown-body {
+  @apply text-white;
+}
+
+.chat-bubble-user .markdown-body h1,
+.chat-bubble-user .markdown-body h2,
+.chat-bubble-user .markdown-body h3,
+.chat-bubble-user .markdown-body h4,
+.chat-bubble-user .markdown-body h5,
+.chat-bubble-user .markdown-body h6 {
+  @apply text-white;
+}
+
+.chat-bubble-user .markdown-body a {
+  @apply text-sky-200 hover:text-white;
+}
+
+.chat-bubble-user .markdown-body code {
+  @apply bg-white/20 text-white;
+}
+
+.chat-bubble-user .markdown-body pre {
+  @apply bg-white/10 text-white;
+}
+
+.chat-bubble-user .markdown-body blockquote {
+  @apply border-white/40 text-white/90;
+}
+
+/* Streamdown/Markdown specific styles */
+.markdown-body {
+  @apply text-gray-800 dark:text-gray-200;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  @apply text-gray-900 dark:text-gray-100 font-bold mt-4 mb-2;
+}
+
+.markdown-body h1 {
+  @apply text-2xl;
+}
+
+.markdown-body h2 {
+  @apply text-xl;
+}
+
+.markdown-body h3 {
+  @apply text-lg;
+}
+
+.markdown-body p {
+  @apply my-2 leading-relaxed;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  @apply my-2 ml-4;
+}
+
+.markdown-body li {
+  @apply my-1;
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-gray-300 dark:border-gray-600 pl-4 my-2 italic;
+}
+
+.markdown-body code {
+  @apply bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded text-sm;
+}
+
+.markdown-body pre {
+  @apply bg-gray-100 dark:bg-gray-800 p-3 rounded-lg my-2 overflow-x-auto;
+}
+
+.markdown-body pre code {
+  @apply bg-transparent p-0;
+}
+
+.markdown-body table {
+  @apply border-collapse border border-gray-300 dark:border-gray-600 my-2;
+}
+
+.markdown-body th,
+.markdown-body td {
+  @apply border border-gray-300 dark:border-gray-600 px-3 py-2;
+}
+
+/* 拖拽调整宽度相关样式 */
+.resize-handle {
+  @apply absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-sky-500 transition-colors;
+  user-select: none;
+}
+
+.resize-handle:hover,
+.resize-handle.resizing {
+  @apply bg-sky-500;
+}
+
+.resize-handle::after {
+  content: '';
+  @apply absolute top-1/2 left-1/2 w-1 h-8 bg-white rounded-full transform -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity;
+}
+
+.resize-handle:hover::after,
+.resize-handle.resizing::after {
+  @apply opacity-100;
+}
+
+/* 拖拽时禁止文本选择 */
+body.resizing * {
+  user-select: none !important;
+  cursor: col-resize !important;
+}
+
+.markdown-body th {
+  @apply bg-gray-100 dark:bg-gray-800 font-bold;
+}
+
+.markdown-body a {
+  @apply text-sky-600 dark:text-sky-400 hover:underline;
+}
+
+.markdown-body img {
+  @apply max-w-full h-auto rounded-lg my-2;
+}
