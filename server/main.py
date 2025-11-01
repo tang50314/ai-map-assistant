@@ -137,6 +137,11 @@ def get_db():
     finally:
         db.close()
 
+# 启动服务器
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
 def get_password_hash(password: str):
     return pwd_context.hash(password)
 
@@ -208,27 +213,55 @@ async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
 # 流式响应
-async def handle_autogen_stream(content: str, conversation_id: int, db: Session):
+async def handle_autogen_stream(content: str, conversation_id: int, db: Session, mode: str = "general"):
     """
     纯粹的 Autogen 流式处理逻辑。
-    用户的任何输入都将作为 Autogen 团队的任务。
+    根据对话模式选择对应的处理函数。
     """
     full_response = ""
     
-    # 调用 Autogen 多代理系统处理查询
-    print(f"🤖 收到用户输入，直接启动 Autogen 多代理系统: {content}")
+    print(f"🤖 收到用户输入，模式: {mode}, 内容: {content}")
     
     try:
-        # 调用 team.py 中的 process_map_query
-        final_result = await process_map_query(content)
-        
-        # 模拟流式输出 Autogen 的结果
-        full_response = final_result
-        
-        # 将最终结果按字符流式输出给前端
-        for char in final_result:
-            yield f"data: {json.dumps({'content': char, 'done': False})}\n\n"
-            await asyncio.sleep(0.005)  # 模拟流式延迟
+        # 根据模式选择对应的处理函数
+        if mode == "general":
+            print(f"🎯 使用普通聊天代理处理")
+            from team import process_general_query
+            async for chunk in process_general_query(content, conversation_id, db):
+                if chunk.get("content"):
+                    yield f"data: {json.dumps({'content': chunk['content'], 'done': False})}\n\n"
+                    full_response += chunk["content"]
+                if chunk.get("done"):
+                    break
+                    
+        elif mode == "route":
+            print(f"🎯 使用路线规划代理处理")
+            from team import process_route_query
+            async for chunk in process_route_query(content, conversation_id, db):
+                if chunk.get("content"):
+                    yield f"data: {json.dumps({'content': chunk['content'], 'done': False})}\n\n"
+                    full_response += chunk["content"]
+                if chunk.get("done"):
+                    break
+                    
+        elif mode == "travel":
+            print(f"🎯 使用旅行规划代理处理")
+            from team import process_travel_query
+            async for chunk in process_travel_query(content, conversation_id, db):
+                if chunk.get("content"):
+                    yield f"data: {json.dumps({'content': chunk['content'], 'done': False})}\n\n"
+                    full_response += chunk["content"]
+                if chunk.get("done"):
+                    break
+                    
+        else:
+            # 默认使用地图查询
+            print(f"🎯 使用地图查询代理处理")
+            final_result = await process_map_query(content)
+            full_response = final_result
+            for char in final_result:
+                yield f"data: {json.dumps({'content': char, 'done': False})}\n\n"
+                await asyncio.sleep(0.005)  # 模拟流式延迟
 
     except Exception as e:
         # 如果 Autogen 或 MCP 失败，直接返回错误信息
@@ -318,9 +351,13 @@ async def create_message_stream(
 
     # 直接调用 Autogen 流处理函数
     if message.sender == "user":
+        # 根据对话的模式选择对应的处理函数
+        mode = conversation.mode or "general"
+        print(f"🔄 对话模式: {mode}, 用户消息: {message.content}")
+        
         # 注意：这里传递的 db 是请求的 Session， handle_autogen_stream 在内部创建新的 Session 保存 AI 消息。
         return StreamingResponse(
-            handle_autogen_stream(message.content, conversation_id, db),
+            handle_autogen_stream(message.content, conversation_id, db, mode),
             media_type="text/event-stream",
         )
 
