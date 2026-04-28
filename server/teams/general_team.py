@@ -5,14 +5,14 @@ from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.messages import TextMessage, BaseChatMessage
 from autogen_agentchat.teams import SelectorGroupChat
 from sqlalchemy.orm import Session
-from .base import model_client, flush_print,create_mcp_workbench
+from .base import model_client, flush_print, get_mcp_workbench
 
 async def process_general_query(user_query: str, conversation_id: int, db: Session) -> AsyncGenerator[Dict, None]:
     """普通聊天：单代理快速响应，支持上下文记忆"""
     flush_print(f"💬 收到普通聊天请求: {user_query}")
     
     # 获取对话历史消息（排除当前刚插入的消息）
-    from main import Message
+    from models import Message
     history_messages = db.query(Message).filter(
         Message.conversation_id == conversation_id,
         Message.sender != "system"  # 排除系统消息
@@ -30,7 +30,7 @@ async def process_general_query(user_query: str, conversation_id: int, db: Sessi
     current_message = TextMessage(content=user_query, source="user")
     messages.append(current_message)
     
-    workbench = await create_mcp_workbench()
+    workbench = await get_mcp_workbench()
 
 
     agent = AssistantAgent(
@@ -38,10 +38,11 @@ async def process_general_query(user_query: str, conversation_id: int, db: Sessi
         description="通用对话助手",
         model_client=model_client,
         workbench=workbench,
+        model_client_stream=True,
         system_message='''你是一个友好的AI助手，回答用户日常问题。
-        可以调用mcp工具回答用户提问，但必须将得到的结果以markdown的格式结构化输出。
+        可以调用workbench中的工具回答用户提问，但必须将调用后得到的结果以markdown的格式结构化输出。
         不得随意输出
-        参考对话历史来理解上下文，保持对话的连贯性。不要使用工具。'''
+        参考对话历史来理解上下文，保持对话的连贯性。'''
     )
     
     flush_print(f"🗣️ GeneralAgent 正在处理: {user_query}")

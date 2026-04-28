@@ -2,9 +2,8 @@ from fastapi import FastAPI, HTTPException, Depends, status, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -12,8 +11,9 @@ from typing import List, Optional
 import os
 import json
 import asyncio
-from team import process_map_query
+from teams import process_map_query
 from pydantic import BaseModel
+from models import Base, User, Conversation, Message, ModelConfig
 
 class ConversationOut(BaseModel):
     id: int
@@ -21,6 +21,9 @@ class ConversationOut(BaseModel):
     mode: str
     created_at: datetime
     updated_at: datetime
+    spa_task_id: Optional[str] = None  # SPA任务ID
+    spa_content: Optional[str] = None  # 生成的HTML内容
+    generated_code: Optional[str] = None  # 生成的代码内容
 
 class MessageOut(BaseModel):
     id: int
@@ -28,6 +31,9 @@ class MessageOut(BaseModel):
     sender: str
     timestamp: datetime
     conversation_id: int
+    agent: Optional[str] = None
+    type: Optional[str] = None
+    thinking_process: Optional[str] = None
 
 class ConversationDetailOut(BaseModel):
     id: int
@@ -35,6 +41,9 @@ class ConversationDetailOut(BaseModel):
     mode: str
     created_at: datetime
     updated_at: datetime
+    spa_task_id: Optional[str] = None  # SPA任务ID
+    spa_content: Optional[str] = None  # 生成的HTML内容
+    generated_code: Optional[str] = None  # 生成的代码内容
     messages: List[MessageOut]
 
 class ModelConfigOut(BaseModel):
@@ -46,7 +55,7 @@ class ModelConfigOut(BaseModel):
     temperature: float
     max_tokens: int
 
-app = FastAPI(title="AI地图助手后端服务", description="集成百度地图MCP的智能对话系统 (纯Autogen驱动)")
+app = FastAPI(title="AI地图助手后端服务", description="集成百度地图MCP的智能对话系统")
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,7 +68,6 @@ app.add_middleware(
 SQLALCHEMY_DATABASE_URL = "sqlite:///./sqlitedb/aimapassistant.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
 SECRET_KEY = "your-secret-key"
 ALGORITHM = "HS256"
@@ -67,48 +75,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.now)
-    conversations = relationship("Conversation", back_populates="owner")
-
-class Conversation(Base):
-    __tablename__ = "conversations"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-    mode = Column(String, default="general")
-    user_id = Column(Integer, ForeignKey("users.id"))
-    owner = relationship("User", back_populates="conversations")
-    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
-
-class Message(Base):
-    __tablename__ = "messages"
-    id = Column(Integer, primary_key=True, index=True)
-    content = Column(Text, nullable=False)
-    sender = Column(String, nullable=False)
-    timestamp = Column(DateTime, default=datetime.now)
-    conversation_id = Column(Integer, ForeignKey("conversations.id"))
-    conversation = relationship("Conversation", back_populates="messages")
-
-class ModelConfig(Base):
-    __tablename__ = "model_configs"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True)
-    api_key = Column(String, nullable=True)
-    model_name = Column(String, default="gpt-4o")
-    base_url = Column(String, default="https://api.openai.com/v1")
-    temperature = Column(Float, default=0.7)
-    max_tokens = Column(Integer, default=4096)
-    owner = relationship("User")
-
-Base.metadata.create_all(bind=engine)
 
 class UserCreate(BaseModel):
     username: str
@@ -118,6 +84,10 @@ class UserCreate(BaseModel):
 class MessageCreate(BaseModel):
     content: str
     sender: str
+    agent: Optional[str] = None
+    type: Optional[str] = None
+    thinking_process: Optional[str] = None
+    user_location: Optional[dict] = None  # 用户位置信息
 
 class ConversationCreate(BaseModel):
     title: str
@@ -130,6 +100,8 @@ class ModelConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
 
+Base.metadata.create_all(bind=engine)
+
 def get_db():
     db = SessionLocal()
     try:
@@ -140,7 +112,7 @@ def get_db():
 # 启动服务器
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
 
 def get_password_hash(password: str):
     return pwd_context.hash(password)
@@ -213,12 +185,14 @@ async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
 # 流式响应
-async def handle_autogen_stream(content: str, conversation_id: int, db: Session, mode: str = "general"):
+async def handle_autogen_stream(content: str, conversation_id: int, db: Session, mode: str = "general", user_location: Optional[dict] = None):
     """
     纯粹的 Autogen 流式处理逻辑。
     根据对话模式选择对应的处理函数。
     """
     full_response = ""
+    thinking_process = []  # 存储思考过程
+    final_result = ""
     
     print(f"🤖 收到用户输入，模式: {mode}, 内容: {content}")
     
@@ -226,68 +200,149 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
         # 根据模式选择对应的处理函数
         if mode == "general":
             print(f"🎯 使用普通聊天代理处理")
-            from team import process_general_query
+            from teams import process_general_query
             async for chunk in process_general_query(content, conversation_id, db):
-                if chunk.get("content"):
-                    yield f"data: {json.dumps({'content': chunk['content'], 'done': False})}\n\n"
-                    full_response += chunk["content"]
+                if chunk.get("agent") and chunk.get("content"):
+                    # 为ResultAgent启用逐字符流式输出，实现打字机效果
+                    if chunk["agent"] == "ResultAgent":
+                        # 逐字符发送，实现打字机效果
+                        for char in chunk["content"]:
+                            yield f"data: {json.dumps({'agent': chunk['agent'], 'content': char, 'type': 'agent_output', 'done': False})}\n\n"
+                            await asyncio.sleep(0.01)
+                    else:
+                        # 其他agent一次性发送
+                        yield f"data: {json.dumps({'agent': chunk['agent'], 'content': chunk['content'], 'type': 'agent_output', 'done': False})}\n\n"
+                    
+                    # 收集思考过程
+                    if chunk["agent"] != "ResultAgent":
+                        thinking_process.append({
+                            "agent": chunk["agent"],
+                            "content": chunk["content"]
+                        })
+                    else:
+                        final_result += chunk["content"]
+                        
                 if chunk.get("done"):
                     break
                     
         elif mode == "route":
             print(f"🎯 使用路线规划代理处理")
-            from team import process_route_query
-            async for chunk in process_route_query(content, conversation_id, db):
-                if chunk.get("content"):
-                    yield f"data: {json.dumps({'content': chunk['content'], 'done': False})}\n\n"
-                    full_response += chunk["content"]
+            from teams import process_route_query
+            async for chunk in process_route_query(content, conversation_id, db, user_location):
+                if chunk.get("agent") and chunk.get("content"):
+                    # 为ResultAgent启用逐字符流式输出，实现打字机效果
+                    if chunk["agent"] == "ResultAgent":
+                        # 逐字符发送，实现打字机效果
+                        for char in chunk["content"]:
+                            yield f"data: {json.dumps({'agent': chunk['agent'], 'content': char, 'type': 'agent_output', 'done': False})}\n\n"
+                            await asyncio.sleep(0.01)  # 控制打字速度
+                    else:
+                        # 其他agent一次性发送
+                        yield f"data: {json.dumps({'agent': chunk['agent'], 'content': chunk['content'], 'type': 'agent_output', 'done': False})}\n\n"
+                    
+                    # 收集思考过程
+                    if chunk["agent"] != "ResultAgent":
+                        thinking_process.append({
+                            "agent": chunk["agent"],
+                            "content": chunk["content"]
+                        })
+                    else:
+                        final_result += chunk["content"]
+                        
                 if chunk.get("done"):
                     break
                     
         elif mode == "travel":
             print(f"🎯 使用旅行规划代理处理")
-            from team import process_travel_query
+            from teams import process_travel_query
             async for chunk in process_travel_query(content, conversation_id, db):
-                if chunk.get("content"):
-                    yield f"data: {json.dumps({'content': chunk['content'], 'done': False})}\n\n"
-                    full_response += chunk["content"]
+                if chunk.get("agent") and chunk.get("content"):
+                    # 为ResultAgent启用逐字符流式输出，实现打字机效果
+                    if chunk["agent"] == "ResultAgent":
+                        # 逐字符发送，实现打字机效果
+                        for char in chunk["content"]:
+                            yield f"data: {json.dumps({'agent': chunk['agent'], 'content': char, 'type': 'agent_output', 'done': False})}\n\n"
+                            await asyncio.sleep(0.01)  # 控制打字速度
+                    else:
+                        # 其他agent一次性发送
+                        yield f"data: {json.dumps({'agent': chunk['agent'], 'content': chunk['content'], 'type': 'agent_output', 'done': False})}\n\n"
+                    
+                    # 收集思考过程
+                    if chunk["agent"] != "ResultAgent":
+                        thinking_process.append({
+                            "agent": chunk["agent"],
+                            "content": chunk["content"]
+                        })
+                    else:
+                        final_result += chunk["content"]
+                        
                 if chunk.get("done"):
+                    print(f"✅ 收到完成信号，final_result长度: {len(final_result)}, thinking_process数量: {len(thinking_process)}")
                     break
                     
         else:
             # 默认使用地图查询
             print(f"🎯 使用地图查询代理处理")
             final_result = await process_map_query(content)
-            full_response = final_result
             for char in final_result:
-                yield f"data: {json.dumps({'content': char, 'done': False})}\n\n"
+                yield f"data: {json.dumps({'content': char, 'type': 'simple_output', 'done': False})}\n\n"
                 await asyncio.sleep(0.005)  # 模拟流式延迟
 
     except Exception as e:
         # 如果 Autogen 或 MCP 失败，直接返回错误信息
         error_message = f"多代理系统调用失败 (Autogen/MCP 错误)：{str(e)}。请检查 MCP Key 和 Autogen 配置。"
         print(f"❌ 严重错误: {error_message}")
+        print(f"错误详情: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
         for char in error_message:
-            yield f"data: {json.dumps({'content': char, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'content': char, 'type': 'error', 'done': False})}\n\n"
             await asyncio.sleep(0.005)
-        full_response = error_message
+        final_result = error_message
     
     finally:
         # 保存完整的AI响应到数据库
-        if full_response:
+        print(f"💾 准备保存AI消息，final_result长度: {len(final_result)}, thinking_process数量: {len(thinking_process)}")
+        if final_result or thinking_process:  # 只要有结果或思考过程就保存
             try:
                 # 使用一个新的 Session 来确保线程安全
                 db_save = SessionLocal()
-                ai_message = Message(content=full_response, sender="ai", conversation_id=conversation_id)
+                
+                # 确定最终显示的内容：优先使用final_result，如果没有则使用思考过程中的最后一个输出
+                display_content = final_result
+                if not display_content and thinking_process:
+                    # 使用思考过程中的最后一个输出作为显示内容
+                    display_content = thinking_process[-1]["content"]
+                if not display_content:
+                    display_content = "无最终输出"
+                
+                # 确定agent类型：优先使用ResultAgent，如果没有则使用思考过程中的最后一个agent
+                agent_type = "ResultAgent" if final_result else None
+                if not agent_type and thinking_process:
+                    agent_type = thinking_process[-1]["agent"]
+                
+                ai_message = Message(
+                    content=display_content,
+                    sender="ai",
+                    conversation_id=conversation_id,
+                    agent=agent_type,
+                    type="final",
+                    thinking_process=json.dumps(thinking_process, ensure_ascii=False) if thinking_process else None
+                )
                 db_save.add(ai_message)
                 db_save.commit()
                 db_save.close()
-                print(f"✅ AI消息已保存到数据库，长度: {len(full_response)}")
+                print(f"✅ AI消息已保存到数据库，内容长度: {len(display_content)}, 思考过程: {len(thinking_process)} 条, agent: {agent_type}")
             except Exception as db_e:
-                print(f"数据库保存失败: {db_e}")
+                print(f"❌ 数据库保存失败: {db_e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("⚠️ 没有内容需要保存")
         
         # 发送结束信号
-        yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
+        yield f"data: {json.dumps({'content': '', 'type': 'final', 'done': True})}\n\n"
 
 @app.post("/conversations/{conversation_id}/messages/stream/general/")
 async def stream_general_message(
@@ -357,7 +412,7 @@ async def create_message_stream(
         
         # 注意：这里传递的 db 是请求的 Session， handle_autogen_stream 在内部创建新的 Session 保存 AI 消息。
         return StreamingResponse(
-            handle_autogen_stream(message.content, conversation_id, db, mode),
+            handle_autogen_stream(message.content, conversation_id, db, mode, message.user_location),
             media_type="text/event-stream",
         )
 
@@ -368,7 +423,8 @@ async def create_message_stream(
 
 @app.get("/conversations/", response_model=List[ConversationOut])
 async def get_conversations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.query(Conversation).filter(Conversation.user_id == current_user.id).all()
+    conversations = db.query(Conversation).filter(Conversation.user_id == current_user.id).all()
+    return conversations
 
 @app.get("/conversations/{conversation_id}", response_model=ConversationDetailOut)
 async def get_conversation(conversation_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -385,12 +441,18 @@ async def get_conversation(conversation_id: int, current_user: User = Depends(ge
         mode=conversation.mode,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+        spa_task_id=conversation.spa_task_id,
+        spa_content=conversation.spa_content,
+        generated_code=conversation.generated_code,
         messages=[MessageOut(
             id=msg.id,
             content=msg.content,
             sender=msg.sender,
             timestamp=msg.timestamp,
-            conversation_id=msg.conversation_id
+            conversation_id=msg.conversation_id,
+            agent=msg.agent,
+            type=msg.type,
+            thinking_process=msg.thinking_process
         ) for msg in messages]
     )
 
@@ -435,6 +497,33 @@ async def update_conversation_title(conversation_id: int, title_update: dict, cu
     conv.title = new_title.strip()
     db.commit()
     return {"msg": "Conversation title updated", "title": conv.title}
+
+@app.patch("/conversations/{conversation_id}/spa-task")
+async def update_conversation_spa_task(conversation_id: int, spa_task_update: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """更新对话的SPA任务ID"""
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    spa_task_id = spa_task_update.get("spa_task_id")
+    conv.spa_task_id = spa_task_id
+    db.commit()
+    return {"msg": "Conversation SPA task ID updated", "spa_task_id": conv.spa_task_id}
+
+@app.patch("/conversations/{conversation_id}/spa-content")
+async def update_conversation_spa_content(conversation_id: int, spa_content_update: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """更新对话的SPA内容"""
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    spa_content = spa_content_update.get("spa_content")
+    generated_code = spa_content_update.get("generated_code")
+    
+    conv.spa_content = spa_content
+    conv.generated_code = generated_code
+    db.commit()
+    return {"msg": "Conversation SPA content updated", "spa_content": conv.spa_content, "generated_code": conv.generated_code}
 
 @app.get("/model-config/", response_model=ModelConfigOut)
 async def get_model_config(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):

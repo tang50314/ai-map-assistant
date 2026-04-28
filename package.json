@@ -6,7 +6,9 @@
   "scripts": {
     "dev:client": "vite --host --port 3000",
     "dev:server": "cd server && python -m uvicorn main:app --reload --port 8001",
-    "dev": "concurrently \"pnpm dev:client\" \"pnpm dev:server\"",
+    "dev:spa": "cd server && python main_spa.py",
+    "dev:map": "cd server && PYTHONPATH=server python main_map.py",
+    "dev": "concurrently \"pnpm dev:client\" \"pnpm dev:server\" \"pnpm dev:spa\" \"pnpm dev:map\"",
     "build:client": "vite build --outDir dist/static",
     "build": "rm -rf dist && pnpm build:client && cp package.json dist && touch dist/build.flag"
   },
@@ -16,6 +18,7 @@
     "lucide-react": "^0.441.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-resizable": "^3.0.5",
     "react-router-dom": "^7.3.0",
     "recharts": "^2.15.1",
     "rehype-katex": "^7.0.1",

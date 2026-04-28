@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+     <title>杭州自驾四川甘孜大草原全景攻略</title>
+     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+     <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.10.2/dist/cdn.min.js" defer></script>
+     <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+     <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+        }
+        .hero {
+            background: linear-gradient(135deg, #1e5799 0%, #207cca 51%, #2989d8 100%);
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        .map-container {
+            height: 400px;
+             width: 100%;
+             border-radius: 10px;
+             overflow: hidden;
+         }
+     </style>
+ </head>
+ <body>
+     <!-- Hero Section -->
+     <div class="hero text-white py-20">
+         <div class="container mx-auto px-6 text-center">
+             <h1 class="text-5xl font-bold mb-6" data-aos="fade-down">杭州自驾四川甘孜大草原全景攻略</h1>
+             <p class="text-xl mb-8" data-aos="fade-down" data-aos-delay="200">一场穿越2400公里的壮丽旅程</p>
+             <button class="bg-white text-blue-600 font-bold py-3 px-6 rounded-full hover:scale-105 transition-transform" data-aos="fade-up" data-aos-delay="400">开始旅程</button>
+         </div>
+     </div>
+ 
+     <div class="container mx-auto px-6 py-12">
+         <div class="text-center mb-12">
+             <h2 class="text-3xl font-bold mb-4" data-aos="fade-up">行程概览</h2>
+             <div class="w-24 h-1 bg-blue-600 mx-auto mb-8" data-aos="fade-up" data-aos-delay="200"></div>
+         </div>
+         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+             <div class="bg-white p-6 rounded-lg shadow-md card" data-aos="fade-up" data-aos-delay="200">
+                 <div class="text-blue-600 text-3xl mb-4"><i class="fas fa-road"></i></div>
+                 <h3 class="text-xl font-bold mb-2">总里程</h3>
+                 <p class="text-gray-600">约2400公里（单程）</p>
+             </div>
+             <div class="bg-white p-6 rounded-lg shadow-md card" data-aos="fade-up" data-aos-delay="300">
+                 <div class="text-blue-600 text-3xl mb-4"><i class="fas fa-calendar-alt"></i></div>
+                 <h3 class="text-xl font-bold mb-2">建议天数</h3>
+                 <p class="text-gray-600">7-10天（单程）</p>
+             </div>
+             <div class="bg-white p-6 rounded-lg shadow-md card" data-aos="fade-up" data-aos-delay="400">
+                 <div class="text-blue-600 text-3xl mb-4"><i class="fas fa-mountain"></i></div>
+                 <h3 class="text-xl font-bold mb-2">最高海拔</h3>
+                 <p class="text-gray-600">4200米（需注意高原反应）</p>
+             </div>
+         </div>
+     </div>
+ 
+     <!-- Detailed Route Section -->
+     <div class="bg-gray-100 py-12">
+         <div class="container mx-auto px-6">
+             <div class="text-center mb-12">
+                 <h2 class="text-3xl font-bold mb-4" data-aos="fade-up">详细路线规划</h2>
+                 <div class="w-24 h-1 bg-blue-600 mx-auto mb-8" data-aos="fade-up" data-aos-delay="200"></div>
+             </div>
+             
+
+             <div class="mb-16">
+                 <h3 class="text-2xl font-bold mb-6" data-aos="fade-up">第一阶段：杭州→重庆 (3天)</h3>
+                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                     <div class="bg-white p-6 rounded-lg shadow-md" data-aos="fade-up">
+                         <canvas id="phase1Chart"></canvas>
+                     </div>
+                     <div class="bg-white p-6 rounded-lg shadow-md" data-aos="fade-up" data-aos-delay="200">
+                         <div class="mb-6">
+                             <h4 class="text-xl font-bold mb-2">Day1：杭州→武汉</h4>
+                             <p class="text-gray-600"><i class="fas fa-map-marker-alt text-blue-600 mr-2"></i>720km，8小时</p>
+                             <p class="mt-2"><i class="fas fa-hotel text-blue-600 mr-2"></i>住宿建议：武昌临江区域酒店</p>
+                         </div>
+                         <div class="mb-6">
+                             <h4 class="text-xl font-bold mb-2">Day2：武汉→宜昌</h4>
+                             <p class="text-gray-600"><i class="fas fa-map-marker-alt text-blue-600 mr-2"></i>320km，4小时</p>
+                             <p class="mt-2"><i class="fas fa-utensils text-blue-600 mr-2"></i>特色美食：宜昌小面</p>
+                         </div>
+                         <div>
+                             <h4 class="text-xl font-bold mb-2">Day3：宜昌→重庆</h4>
+                             <p class="text-gray-600"><i class="fas fa-map-marker-alt text-blue-600 mr-2"></i>560km，6.5小时</p>
+                             <p class="mt-2"><i class="fas fa-exclamation-triangle text-blue-600 mr-2"></i>注意事项：重庆多单行道，建议使用导航</p>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+             
+
+             <div>
+                 <h3 class="text-2xl font-bold mb-6" data-aos="fade-up">第二阶段：重庆→甘孜 (3-4天)</h3>
+                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                     <div class="bg-white p-6 rounded-lg shadow-md" data-aos="fade-up">
+                         <canvas id="phase2Chart"></canvas>
+                     </div>
+                     <div class="bg-white p-6 rounded-lg shadow-md" data-aos="fade-up" data-aos-delay="200">
+                         <div class="mb-6">
+                             <h4 class="text-xl font-bold mb-2">Day4：重庆→雅安</h4>
+                             <p class="text-gray-600"><i class="fas fa-map-marker-alt text-blue-600 mr-2"></i>350km，5小时</p>
+                             <p class="mt-2"><i class="fas fa-paw text-blue-600 mr-2"></i>推荐停留：碧峰峡大熊猫基地</p>
+                         </div>
+                         <div class="mb-6">
+                             <h4 class="text-xl font-bold mb-2">Day5：雅安→康定</h4>
+                             <p class="text-gray-600"><i class="fas fa-map-marker-alt text-blue-600 mr-2"></i>240km，5小时</p>
+                             <p class="mt-2"><i class="fas fa-mountain text-blue-600 mr-2"></i>海拔变化：515→2600米</p>
+                         </div>
+                         <div>
+                             <h4 class="text-xl font-bold mb-2">Day6：康定→甘孜</h4>
+                             <p class="text-gray-600"><i class="fas fa-map-marker-alt text-blue-600 mr-2"></i>300km，6小时</p>
+                             <p class="mt-2"><i class="fas fa-camera text-blue-600 mr-2"></i>核心美景：折多山、新都桥摄影天堂</p>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+         </div>
+     </div>
+ 
+
+     <div class="container mx-auto px-6 py-12">
+         <div class="text-center mb-12">
+             <h2 class="text-3xl font-bold mb-4" data-aos="fade-up">路线地图</h2>
+             <div class="w-24 h-1 bg-blue-600 mx-auto mb-8" data-aos="fade-up" data-aos-delay="200"></div>
+         </div>
+         <div class="map-container bg-gray-200 mb-12" data-aos="fade-up">
+             <iframe src="https://map.baidu.com/vercel/h5v3/mark-map/?id=d83cae1d833019fa43e79d2a0c380f7d" width="100%" height="100%" frameborder="0" style="border:0"></iframe>
+         </div>
+     </div>
+     <div class="bg-gray-100 py-12">
+         <div class="container mx-auto px-6">
+             <div class="text-center mb-12">
+                 <h2 class="text-3xl font-bold mb-4" data-aos="fade-up">预算参考（按2人计）</h2>
+                 <div class="w-24 h-1 bg-blue-600 mx-auto mb-8" data-aos="fade-up" data-aos-delay="200"></div>
+             </div>
+             <div class="overflow-x-auto">
+                 <table class="min-w-full bg-white rounded-lg overflow-hidden">
+                     <thead class="bg-blue-600 text-white">
+                         <tr>
+                             <th class="py-3 px-6 text-left">项目</th>
+                             <th class="py-3 px-6 text-left">费用区间</th>
+                         </tr>
+                     </thead>
+                     <tbody class="divide-y divide-gray-200">
+                         <tr>
+                             <td class="py-4 px-6">油费</td>
+                             <td class="py-4 px-6">¥2800-3500</td>
+                         </tr>
+                         <tr>
+                             <td class="py-4 px-6">过路费</td>
+                             <td class="py-4 px-6">¥1200左右</td>
+                         </tr>
+                         <tr>
+                             <td class="py-4 px-6">住宿</td>
+                             <td class="py-4 px-6">¥400-800/晚</td>
+                         </tr>
+                         <tr>
+                             <td class="py-4 px-6">餐饮</td>
+                             <td class="py-4 px-6">¥200-400/天</td>
+                         </tr>
+                         <tr>
+                             <td class="py-4 px-6">景点门票</td>
+                             <td class="py-4 px-6">¥500-800</td>
+                         </tr>
+                         <tr>
+                             <td class="py-4 px-6 font-bold">总计</td>
+                             <td class="py-4 px-6 font-bold">¥15000-20000</td>
+                         </tr>
+                     </tbody>
+                 </table>
+             </div>
+         </div>
+     </div>
+     <!-- Footer -->
+     <footer class="bg-gray-800 text-white py-8">
+         <div class="container mx-auto px-6 text-center">
+             <p class="mb-4">如需更详细的地点信息或实时路况，请随时联系我们。</p>
+             <p class="text-sm text-gray-400">© 2023 杭州自驾四川甘孜大草原全景攻略</p>
+         </div>
+     </footer>
+ 
+     <script>
+         AOS.init();
+ 
+         // Phase 1 Chart
+         const phase1Ctx = document.getElementById('phase1Chart').getContext('2d');
+         const phase1Chart = new Chart(phase1Ctx, {
+             type: 'pie',
+             data: {
+                 labels: ['杭州-武汉', '武汉-宜昌', '宜昌-重庆'],
+                 datasets: [{
+                     data: [720, 320, 560],
+                     backgroundColor: ['#1e5799', '#207cca', '#2989d8'],
+                 }]
+             },
+             options: {
+                 responsive: true,
+                 plugins: {
+                     title: {
+                         display: true,
+                         text: '第一阶段里程分布',
+                         font: { size: 16 }
+                     }
+                 }
+             }
+         });
+         
+         // Phase 2 Chart
+         const phase2Ctx = document.getElementById('phase2Chart').getContext('2d');
+         const phase2Chart = new Chart(phase2Ctx, {
+             type: 'bar',
+             data: {
+                 labels: ['重庆→雅安', '雅安→康定', '康定→甘孜'],
+                 datasets: [{
+                     label: '距离 (km)',
+                     data: [350, 240, 300],
+                     backgroundColor: ['#1e5799', '#207cca', '#2989d8'],
+                 }]
+             },
+             options: {
+                 responsive: true,
+                 plugins: {
+                     title: {
+                         display: true,
+                         text: '第二阶段路线距离',
+                         font: { size: 16 }
+                     }
+                 },
+                 scales: {
+                     y: {
+                         beginAtZero: true
+                     }
+                 }
+             }
+         });
+     </script>
+ </body>
+ </html>
