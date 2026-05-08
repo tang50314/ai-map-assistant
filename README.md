@@ -46,14 +46,12 @@
 
 ### AI能力
 ```
-- 模型：OpenAI GPT-4/4o（可配置）
+- 模型：（可配置）
 - 多Agent框架：AutoGen
 - 工具调用：MCP Standard Protocol
 ```
 
-## 🎓 个人收获
-
-通过这个项目，我深入学习了：
+## 主要设计
 
 1. **大模型应用**
    - Prompt Engineering：为不同Agent编写专业化的system message
@@ -191,11 +189,7 @@ async def get_baidu_mcp_workbench():
 ### Agent无响应
 1. 检查OpenAI API额度
 2. 查看Token使用情况
-3. 检查模型是否可用（gpt-4o）
-
-## 📝 许可证
-
-本项目为毕业设计演示版，仅供学习交流使用。
+3. 检查模型是否可用
 
 ---
 
