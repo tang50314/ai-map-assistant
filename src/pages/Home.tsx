@@ -3,65 +3,36 @@ import React, { useState, useEffect, useRef, useContext } from 'react';
 import { toast } from 'sonner';
 import { useTheme } from '@/hooks/useTheme';
 import { 
-  MessageCircle, Navigation, Plane, Send, Menu, X, Settings, Moon, Sun, LogOut, Plus, MapPin,
-  MoreVertical, Edit, Trash2, Globe, Code, Copy, RefreshCw, Save
+  Send, Menu, X, Moon, Sun, LogOut, Plus, MapPin,
+  Edit, Trash2, Globe, Code, Copy, RefreshCw, Save
 } from 'lucide-react';
 import { AuthContext } from '@/contexts/authContext';
 import Markdown from '@/components/Markdown';
 import { AgentMessage } from '@/components/AgentMessage';
 import ThinkingProcess from '@/components/ThinkingProcess';
 import MapView from '@/components/MapView';
+import { AuthModal } from '@/components/AuthModal';
+import { StatusNotice } from '@/components/StatusNotice';
+import { API_ENDPOINTS } from '@/config/endpoints';
+import { CHAT_MODES, MODE_META } from '@/config/modes';
+import type { ChatMode, Conversation, LoginFormData, Message, RegisterFormData } from '@/types/domain';
 
-interface Message {
-  id: string;
-  content: string;
-  sender: 'user' | 'ai';
-  timestamp: Date;
-  agent?: string;  // 代理名称
-  type?: 'agent_output' | 'simple_output' | 'error' | 'final';  // 消息类型
-  thinkingProcess?: Array<{agent: string; content: string}>;  // 思考过程
-  isLoading?: boolean;  // 加载状态
-  isStreaming?: boolean;  // 流式输出状态
-}
-
-interface Conversation {
-  id: string;
-  title: string;
-  createdAt: Date;
-  messages: Message[];
-  mode: 'general' | 'route' | 'travel';
-  spaTaskId?: string; // SPA任务ID，用于保存和重新加载HTML内容
-  spaContent?: string; // SPA内容，存储生成的HTML代码
-  generatedCode?: string; // 生成的代码，用于代码查看
-}
-
-interface LoginFormData {
-  username: string;
-  password: string;
-}
-
-interface RegisterFormData {
-  username: string;
-  password: string;
-  email: string;
-}
-
-const MODE_ICONS = {
-  general: MessageCircle,
-  route: Navigation,
-  travel: Plane
-};
-
-const MODE_LABELS = {
-  general: '普通聊天',
-  route: '路线规划',
-  travel: '旅行规划'
-};
-
-const MODE_PREFIX = {
-  general: '[普通]',
-  route: '[路线]',
-  travel: '[旅行]'
+const PROMPT_STARTERS: Record<ChatMode, string[]> = {
+  general: [
+    '帮我介绍一下这个系统能做什么',
+    '我想做一次周末出行，应该选择哪个模式？',
+    '帮我把旅行需求整理成适合提交给规划模式的描述',
+  ],
+  route: [
+    '从上海人民广场自驾到南京夫子庙，沿途想看自然风光和历史文化',
+    '从杭州东站到西湖，帮我比较打车、地铁和步行方案',
+    '我现在出发去最近的博物馆，帮我规划省时间的路线',
+  ],
+  travel: [
+    '我从上海出发去南京，自驾，2-3天，喜欢自然风光和历史文化',
+    '我想周末去杭州，预算1500，想轻松一点，帮我安排两天',
+    '帮我规划一次北京三日游，重点是历史文化、美食和少走路',
+  ],
 };
 
 export default function Home() {
@@ -134,6 +105,8 @@ export default function Home() {
     ? conversations.find(c => c.id === currentConversationId)
     : null;
 
+  const activePromptStarters = PROMPT_STARTERS[chatMode];
+
   // 检查当前对话是否有ResultAgent输出
   const hasResultAgentOutput = () => {
     if (!currentConversation) {
@@ -198,7 +171,7 @@ export default function Home() {
   const loadConversations = async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('http://localhost:8001/conversations/', {
+      const res = await fetch(API_ENDPOINTS.conversations.list, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -212,7 +185,10 @@ export default function Home() {
           spaTaskId: c.spa_task_id || undefined,
           spaContent: c.spa_content || undefined,
           generatedCode: c.generated_code || undefined,
-          lastAiResponse: c.last_ai_response || undefined
+          lastAiResponse: c.last_ai_response || undefined,
+          mapTaskId: c.map_task_id || undefined,
+          mapUrl: c.map_url || undefined,
+          mapQrCode: c.map_qr_code || undefined
         })));
       }
     } catch (error) {
@@ -224,7 +200,7 @@ export default function Home() {
     if (!isAuthenticated) return;
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch(`http://localhost:8001/conversations/${conversationId}`, {
+      const res = await fetch(API_ENDPOINTS.conversations.detail(conversationId), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -252,7 +228,7 @@ export default function Home() {
     if (!editingConversationId || !editingTitle.trim()) return;
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch(`http://localhost:8001/conversations/${editingConversationId}/title`, {
+      const res = await fetch(API_ENDPOINTS.conversations.title(editingConversationId), {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
@@ -286,7 +262,7 @@ export default function Home() {
     if (!currentConversationId || !editableCode.trim()) return;
     const token = localStorage.getItem('token');
     try {
-      const res = await fetch(`http://localhost:8001/conversations/${currentConversationId}/spa-content`, {
+      const res = await fetch(API_ENDPOINTS.conversations.spaContent(currentConversationId), {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
@@ -369,7 +345,7 @@ export default function Home() {
     // 计算新的聊天区域宽度（从左侧到鼠标位置）
     const newWidth = e.clientX - sidebarWidth;
     const minWidth = 400;
-    const maxWidth = window.innerWidth - sidebarWidth - 384; // 减去侧边栏和地图区域固定宽度
+    const maxWidth = window.innerWidth - sidebarWidth - 460; // 减去侧边栏和工作区默认宽度
     
     if (newWidth >= minWidth && newWidth <= maxWidth) {
       setChatWidth(newWidth);
@@ -414,7 +390,7 @@ export default function Home() {
     if (!token) return;
     
     try {
-      const res = await fetch(`http://localhost:8001/conversations/${conversationId}`, {
+      const res = await fetch(API_ENDPOINTS.conversations.detail(conversationId), {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -428,14 +404,30 @@ export default function Home() {
           // 更新当前对话的SPA内容
           setConversations(prev => prev.map(conv => 
             conv.id === conversationId 
-              ? { ...conv, spaContent: data.spa_content, generatedCode: data.generated_code || '' }
+              ? {
+                  ...conv,
+                  spaContent: data.spa_content,
+                  generatedCode: data.generated_code || '',
+                  lastAiResponse: data.last_ai_response || '',
+                  mapTaskId: data.map_task_id || undefined,
+                  mapUrl: data.map_url || undefined,
+                  mapQrCode: data.map_qr_code || undefined
+                }
               : conv
           ));
         } else {
           // 清空当前对话的SPA内容
           setConversations(prev => prev.map(conv => 
             conv.id === conversationId 
-              ? { ...conv, spaContent: '', generatedCode: '' }
+              ? {
+                  ...conv,
+                  spaContent: '',
+                  generatedCode: '',
+                  lastAiResponse: data.last_ai_response || '',
+                  mapTaskId: data.map_task_id || undefined,
+                  mapUrl: data.map_url || undefined,
+                  mapQrCode: data.map_qr_code || undefined
+                }
               : conv
           ));
         }
@@ -468,10 +460,10 @@ export default function Home() {
   const createNewConversation = async (mode: 'general' | 'route' | 'travel') => {
     if (!isAuthenticated) return toast.error('请登录');
     const token = localStorage.getItem('token');
-    const res = await fetch('http://localhost:8001/conversations/', {
+    const res = await fetch(API_ENDPOINTS.conversations.list, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ title: `${MODE_PREFIX[mode]} 新对话`, mode })
+      body: JSON.stringify({ title: `${MODE_META[mode].prefix} 新对话`, mode })
     });
     if (res.ok) {
       const data = await res.json();
@@ -564,7 +556,7 @@ export default function Home() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
       
-      const res = await fetch('http://localhost:8003/map/generate/stream', {
+      const res = await fetch(API_ENDPOINTS.generation.mapStream, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -635,7 +627,7 @@ export default function Home() {
 
         // 保存到数据库
         try {
-          await fetch(`http://localhost:8001/conversations/${currentConversationId}/map-content`, {
+          await fetch(API_ENDPOINTS.conversations.mapContent(currentConversationId), {
             method: 'PATCH',
             headers: {
               'Content-Type': 'application/json',
@@ -648,7 +640,7 @@ export default function Home() {
           });
           
           if (taskId) {
-            await fetch(`http://localhost:8001/conversations/${currentConversationId}/map-task`, {
+            await fetch(API_ENDPOINTS.conversations.mapTask(currentConversationId), {
               method: 'PATCH',
               headers: {
                 'Content-Type': 'application/json',
@@ -747,7 +739,7 @@ export default function Home() {
         }
       }
       
-      const res = await fetch('http://localhost:8002/spa/generate/stream', {
+      const res = await fetch(API_ENDPOINTS.generation.spaStream, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -833,7 +825,7 @@ export default function Home() {
 
         // 保存到数据库
         try {
-          await fetch(`http://localhost:8001/conversations/${currentConversationId}/spa-content`, {
+          await fetch(API_ENDPOINTS.conversations.spaContent(currentConversationId), {
             method: 'PATCH',
             headers: {
               'Content-Type': 'application/json',
@@ -847,7 +839,7 @@ export default function Home() {
           
           // 如果有task_id，也保存到数据库
           if (taskId) {
-            await fetch(`http://localhost:8001/conversations/${currentConversationId}/spa-task`, {
+            await fetch(API_ENDPOINTS.conversations.spaTask(currentConversationId), {
               method: 'PATCH',
               headers: {
                 'Content-Type': 'application/json',
@@ -894,8 +886,6 @@ export default function Home() {
     // 使用当前对话的模式，而不是chatMode状态变量
     const currentConv = conversations.find(c => c.id === currentConversationId);
     const messageMode = currentConv?.mode || chatMode;
-    const endpoint = `/messages/stream/${messageMode}/`;
-    
     // 构建请求体，如果是路线规划模式且用户有位置信息，则包含位置数据
     const requestBody: any = { content: newMessage, sender: 'user' };
     if (messageMode === 'route' && userLocation) {
@@ -906,7 +896,7 @@ export default function Home() {
     }
     
     try {
-      const res = await fetch(`http://localhost:8001/conversations/${currentConversationId}${endpoint}`, {
+      const res = await fetch(API_ENDPOINTS.conversations.stream(currentConversationId, messageMode), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -947,10 +937,10 @@ export default function Home() {
             try {
               const data = JSON.parse(line.slice(6));
               
-              if (data.type === 'agent_output' && data.agent && data.content) {
-                 // 处理agent输出
-                 if (data.agent === 'ResultAgent') {
-                   // ResultAgent的输出采用逐字符累积方式，实现打字机效果
+              if ((data.type === 'agent_output' || data.type === 'error') && data.agent && data.content) {
+                 const isFinalAnswer = data.is_final_answer || data.agent === 'ResultAgent' || data.agent === 'GeneralAgent' || data.agent === 'ErrorAgent';
+                 if (isFinalAnswer) {
+                   // 最终答案统一累积到主气泡，普通聊天和规划结果都走同一条渲染链路
                    finalContent += data.content;
                    setConversations(prev => prev.map(c =>
                      c.id === currentConversationId
@@ -969,65 +959,46 @@ export default function Home() {
                          }
                        : c
                    ));
-                 } else if (data.agent === 'System' && data.type === 'initial_response') {
-                   // 系统初始响应，立即显示给用户
-                   setConversations(prev => prev.map(c =>
-                     c.id === currentConversationId
-                       ? {
-                           ...c,
-                           messages: c.messages.map(m =>
-                             m.id === aiMsgId ? { 
-                               ...m, 
-                               content: data.content,
-                               agent: data.agent,
-                               type: data.type
-                             } : m
-                           )
-                         }
-                       : c
-                   ));
                  } else {
                    // 其他agent的输出收集到思考过程
                    thinkingProcess.push({
                      agent: data.agent,
                      content: data.content
                    });
-                   
-                   // RoutePlanner、MapTool和PreferenceAgent的输出直接显示，但仍然保留在思考过程中以便保存
-                   if (data.agent === 'PreferenceAgent' || data.agent === 'RoutePlanner' || data.agent === 'MapTool') {
-                     setConversations(prev => prev.map(c =>
-                       c.id === currentConversationId
-                         ? {
-                             ...c,
-                             messages: c.messages.map(m =>
-                               m.id === aiMsgId ? { 
-                                 ...m, 
-                                 content: data.content,  // 直接显示RoutePlanner、MapTool和PreferenceAgent的内容
-                                 agent: data.agent,
-                                 type: data.type,
-                                 thinkingProcess: thinkingProcess  // 保留完整的思考过程
-                               } : m
-                             )
-                           }
-                         : c
-                     ));
-                   } else {
-                     // 其他代理（如EndAgent）：更新消息的思考过程
-                     setConversations(prev => prev.map(c =>
-                       c.id === currentConversationId
-                         ? {
-                             ...c,
-                             messages: c.messages.map(m =>
-                               m.id === aiMsgId ? { 
-                                 ...m, 
-                                 thinkingProcess: thinkingProcess
-                               } : m
-                             )
-                           }
-                         : c
-                     ));
-                   }
+                   setConversations(prev => prev.map(c =>
+                     c.id === currentConversationId
+                       ? {
+                           ...c,
+                           messages: c.messages.map(m =>
+                             m.id === aiMsgId ? { 
+                               ...m,
+                               content: m.content || `正在处理：${data.agent}`,
+                               agent: m.agent || data.agent,
+                               type: data.type,
+                               thinkingProcess: [...thinkingProcess]
+                             } : m
+                           )
+                         }
+                       : c
+                   ));
                  }
+               } else if (data.agent === 'System' && data.type === 'initial_response' && data.content) {
+                 // 系统初始响应，作为等待状态展示，最终答案到达后会覆盖
+                 setConversations(prev => prev.map(c =>
+                   c.id === currentConversationId
+                     ? {
+                         ...c,
+                         messages: c.messages.map(m =>
+                           m.id === aiMsgId ? { 
+                             ...m, 
+                             content: finalContent || data.content,
+                             agent: data.agent,
+                             type: data.type
+                           } : m
+                         )
+                       }
+                     : c
+                 ));
                } else if (data.content && data.type === 'simple_output') {
                 // 简单输出模式（兼容旧逻辑）
                 aiContent += data.content;
@@ -1045,13 +1016,32 @@ export default function Home() {
               
               if (data.done && data.type === 'final') {
                 // 保存最后一条AI回复用于网页生成
-                const displayContent = finalContent || aiContent;
+                const displayContent = finalContent || aiContent || data.content || '';
                 setLastAIResponse(displayContent);
+                setConversations(prev => prev.map(c =>
+                  c.id === currentConversationId
+                    ? {
+                        ...c,
+                        lastAiResponse: displayContent,
+                        messages: c.messages.map(m =>
+                          m.id === aiMsgId ? {
+                            ...m,
+                            content: displayContent || m.content,
+                            agent: data.agent || m.agent,
+                            type: 'final',
+                            thinkingProcess,
+                            isLoading: false,
+                            isStreaming: false
+                          } : m
+                        )
+                      }
+                    : c
+                ));
                 
                 // 同时更新当前对话的最后AI响应到数据库
                 if (displayContent && currentConversationId) {
                   try {
-                    await fetch(`http://localhost:8001/conversations/${currentConversationId}/last-ai-response`, {
+                    await fetch(API_ENDPOINTS.conversations.lastAiResponse(currentConversationId), {
                       method: 'PATCH',
                       headers: {
                         'Content-Type': 'application/json',
@@ -1076,24 +1066,12 @@ export default function Home() {
                   }, 1500);
                 }
                 
-                // 移除加载状态，同时设置isStreaming为false表示流式输出结束
-                setConversations(prev => prev.map(c =>
-                  c.id === currentConversationId
-                    ? {
-                        ...c,
-                        messages: c.messages.map(m =>
-                          m.id === aiMsgId ? { ...m, isLoading: false, isStreaming: false } : m
-                        )
-                      }
-                    : c
-                ));
-                
                 if (currentConversation?.title.includes('新对话')) {
                   // 使用当前对话的模式，而不是chatMode状态变量
                   const currentConv = conversations.find(c => c.id === currentConversationId);
                   const messageMode = currentConv?.mode || chatMode;
-                  const newTitle = `${MODE_PREFIX[messageMode]} ${newMessage.slice(0, 25)}...`;
-                  await fetch(`http://localhost:8001/conversations/${currentConversationId}/title`, {
+                  const newTitle = `${MODE_META[messageMode].prefix} ${newMessage.slice(0, 25)}...`;
+                  await fetch(API_ENDPOINTS.conversations.title(currentConversationId), {
                     method: 'PATCH',
                     headers: {
                       'Content-Type': 'application/json',
@@ -1283,17 +1261,20 @@ export default function Home() {
       <style dangerouslySetInnerHTML={{ __html: codeStyles }} />
       {/* 位置获取状态提示 */}
       {locationLoading && (
-        <div className="fixed bottom-4 right-4 z-50 bg-[var(--surface-secondary)] dark:bg-[var(--surface-secondary)] rounded-xl shadow-lg border border-[var(--border-secondary)] p-4 flex items-center space-x-3">
+        <StatusNotice>
+        <div className="flex items-center space-x-3">
           <div className="w-5 h-5 border-2 border-[var(--accent-secondary)] border-t-transparent rounded-full animate-spin"></div>
           <div>
             <p className="text-sm font-medium text-[var(--text-primary)] dark:text-[var(--text-primary)]">正在获取您的位置</p>
             <p className="text-xs text-[var(--text-secondary)] dark:text-[var(--text-secondary)]">请查看浏览器地址栏附近的位置权限请求并点击"允许"</p>
           </div>
         </div>
+        </StatusNotice>
       )}
       
       {locationError && (
-        <div className="fixed bottom-4 right-4 z-50 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl shadow-lg p-4 flex items-center space-x-3 max-w-sm">
+        <StatusNotice tone="warning">
+        <div className="flex items-center space-x-3">
           <div className="w-5 h-5 bg-yellow-500 rounded-full flex items-center justify-center">
             <span className="text-white text-xs">!</span>
           </div>
@@ -1324,6 +1305,7 @@ export default function Home() {
             </div>
           </div>
         </div>
+        </StatusNotice>
       )}
 
       {/* 头部导航 - 玻璃拟态效果 */}
@@ -1376,14 +1358,14 @@ export default function Home() {
               <Plus size={18} />
               <span className="font-medium">新对话</span>
             </button>
-            {(['general', 'route', 'travel'] as const).map(mode => {
-              const Icon = MODE_ICONS[mode];
+            {CHAT_MODES.map(mode => {
+              const Icon = MODE_META[mode].icon;
               return (
                 <button key={mode} onClick={() => createNewConversationWithLocation(mode)} className="w-full p-3 rounded-xl flex items-center space-x-3">
                   <div className="w-8 h-8 rounded-lg bg-[var(--surface-secondary)] flex items-center justify-center">
                     <Icon size={18} className="text-[var(--text-secondary)]" />
                   </div>
-                  <span className="font-medium text-[var(--text-primary)]">{MODE_LABELS[mode]}</span>
+                  <span className="font-medium text-[var(--text-primary)]">{MODE_META[mode].label}</span>
                   {mode === 'route' && locationLoading && (
                     <div className="ml-auto">
                       <div className="w-4 h-4 border-2 border-[var(--accent-secondary)] border-t-transparent rounded-full animate-spin"></div>
@@ -1456,7 +1438,7 @@ export default function Home() {
           className="flex flex-col h-[calc(100vh-4rem)] relative" 
           style={{ 
             marginLeft: `${sidebarWidth}px`, 
-            width: chatWidth > 0 ? `${chatWidth}px` : (chatMode === 'route' || chatMode === 'travel') ? `calc(100% - ${sidebarWidth}px - 384px)` : `calc(100% - ${sidebarWidth}px)`,
+            width: chatWidth > 0 ? `${chatWidth}px` : (chatMode === 'route' || chatMode === 'travel') ? `calc(100% - ${sidebarWidth}px - 460px)` : `calc(100% - ${sidebarWidth}px)`,
             flex: 'none'
           }}
         >
@@ -1514,6 +1496,18 @@ export default function Home() {
               {/* 悬浮式输入框 - 极简高级设计 */}
               <div className="absolute bottom-8 left-0 right-0 px-8">
                 <div className="max-w-3xl mx-auto">
+                  <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                    {activePromptStarters.map((starter) => (
+                      <button
+                        key={starter}
+                        type="button"
+                        onClick={() => setNewMessage(starter)}
+                        className="shrink-0 rounded-full border border-[var(--border-secondary)] bg-[var(--surface-secondary)]/80 px-3 py-2 text-xs text-[var(--text-secondary)] shadow-sm hover:text-[var(--text-primary)]"
+                      >
+                        {starter}
+                      </button>
+                    ))}
+                  </div>
                   <div className="relative">
                     <div className="absolute inset-0 bg-[var(--surface-secondary)]/60 dark:bg-[var(--surface-secondary)]/60 backdrop-blur-2xl rounded-2xl shadow-md border border-[var(--border-secondary)]/40"></div>
                     <div className="relative flex items-center p-3">
@@ -1521,7 +1515,7 @@ export default function Home() {
                         value={newMessage}
                         onChange={e => setNewMessage(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
-                        placeholder="输入消息，开始对话..."
+                        placeholder={chatMode === 'travel' ? '说出出发地、目的地、天数和偏好，我会帮你补全规划...' : chatMode === 'route' ? '输入起点、终点和交通方式，也可以直接点击上方模板...' : '输入消息，开始对话...'}
                         className="flex-1 px-4 py-3 bg-transparent border-0 focus:outline-none focus:ring-0 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
                       />
                       <button
@@ -1549,8 +1543,8 @@ export default function Home() {
               
               {/* 功能卡片网格 - 使用柔和配色 */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-                {(['general', 'route', 'travel'] as const).map((mode, index) => {
-                  const Icon = MODE_ICONS[mode];
+                {CHAT_MODES.map((mode, index) => {
+                  const Icon = MODE_META[mode].icon;
                   const colors = [
                     'bg-[var(--surface-secondary)]',
                     'bg-[var(--surface-secondary)]', 
@@ -1572,7 +1566,7 @@ export default function Home() {
                         <div className="w-12 h-12 rounded-xl bg-[var(--surface-tertiary)] flex items-center justify-center mb-4">
                           <Icon size={24} className="text-[var(--accent-secondary)]" />
                         </div>
-                        <h3 className="font-bold text-xl mb-2">{MODE_LABELS[mode]}</h3>
+                        <h3 className="font-bold text-xl mb-2">{MODE_META[mode].label}</h3>
                         <p className="text-sm opacity-90">
                           {mode === 'general' ? '回答日常问题，提供实用信息' : mode === 'route' ? '智能规划最优出行路线' : '定制个性化旅行行程'}
                         </p>
@@ -1584,12 +1578,28 @@ export default function Home() {
               </div>
               
               {/* 快速开始提示 */}
-              <div className="text-center space-y-3">
-                <p className="text-sm text-[var(--text-secondary)] dark:text-[var(--text-secondary)]">或者点击上方按钮开始新的对话</p>
-                <div className="flex items-center justify-center space-x-2 text-sm text-[var(--text-tertiary)] dark:text-[var(--text-tertiary)]">
-                  <div className="w-1 h-1 rounded-full bg-[var(--text-tertiary)]"></div>
-                  <span className="text-[var(--text-tertiary)] dark:text-[var(--text-tertiary)]">支持路线规划、旅行定制等多种模式</span>
-                  <div className="w-1 h-1 rounded-full bg-gray-400"></div>
+              <div className="w-full max-w-5xl rounded-2xl border border-[var(--border-secondary)] bg-[var(--surface-secondary)] p-5 shadow-soft">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">不知道怎么问？直接从模板开始</p>
+                    <p className="text-xs text-[var(--text-tertiary)]">系统会根据模式自动补全规划流程，减少用户一次性输入成本</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {CHAT_MODES.map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={async () => {
+                        await createNewConversationWithLocation(mode);
+                        setNewMessage(PROMPT_STARTERS[mode][0]);
+                      }}
+                      className="rounded-xl border border-[var(--border-secondary)] bg-[var(--bg-secondary)] p-4 text-left hover:bg-[var(--surface-tertiary)]"
+                    >
+                      <p className="mb-2 text-sm font-semibold text-[var(--text-primary)]">{MODE_META[mode].label}</p>
+                      <p className="text-xs leading-relaxed text-[var(--text-secondary)]">{PROMPT_STARTERS[mode][0]}</p>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1602,7 +1612,7 @@ export default function Home() {
             className={`resize-handle-horizontal ${isResizingChat ? 'resizing' : ''}`}
             onMouseDown={handleChatMouseDown}
             style={{ 
-              left: chatWidth > 0 ? `${sidebarWidth + chatWidth}px` : `calc(100% - 384px)`,
+              left: chatWidth > 0 ? `${sidebarWidth + chatWidth}px` : `calc(100% - 460px)`,
               top: '4rem',
               bottom: '0'
             }}
@@ -1614,7 +1624,7 @@ export default function Home() {
           <aside 
             className="bg-[var(--surface-primary)]/70 dark:bg-[var(--surface-primary)]/70 backdrop-blur-xl border-l border-[var(--border-secondary)]/30 h-[calc(100vh-4rem)]" 
             style={{ 
-              width: chatWidth > 0 ? `calc(100% - ${sidebarWidth}px - ${chatWidth}px)` : '384px',
+              width: chatWidth > 0 ? `calc(100% - ${sidebarWidth}px - ${chatWidth}px)` : '460px',
               flex: 'none'
             }}
           >
@@ -1970,82 +1980,35 @@ export default function Home() {
         )}
       </div>
 
-      {/* 还原您的原始登录弹窗 */}
       {isLoginModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[var(--surface-secondary)] dark:bg-[var(--surface-secondary)] p-6 rounded-xl shadow-xl max-w-sm w-full">
-            <h3 className="text-lg font-bold mb-4">登录</h3>
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-primary)] mb-1">用户名</label>
-                <input
-                  type="text"
-                  value={loginForm.username}
-                  onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-[var(--border-primary)] dark:border-[var(--border-primary)] bg-[var(--bg-tertiary)] dark:bg-[var(--bg-tertiary)] text-[var(--text-primary)] dark:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-secondary)]"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-primary)] mb-1">密码</label>
-                <input
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-[var(--border-primary)] dark:border-[var(--border-primary)] bg-[var(--bg-tertiary)] dark:bg-[var(--bg-tertiary)] text-[var(--text-primary)] dark:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-secondary)]"
-                  required
-                />
-              </div>
-              <button type="submit" className="w-full py-2 px-4 rounded-xl bg-[var(--accent-secondary)] text-white font-medium">
-                登录
-              </button>
-            </form>
-          </div>
-        </div>
+        <AuthModal
+          title="登录"
+          submitText="登录"
+          fields={[
+            { key: 'username', label: '用户名', type: 'text' },
+            { key: 'password', label: '密码', type: 'password' },
+          ]}
+          form={loginForm}
+          onChange={setLoginForm}
+          onSubmit={handleLogin}
+          onClose={() => setIsLoginModalOpen(false)}
+        />
       )}
 
-      {/* 还原您的原始注册弹窗 */}
       {isRegisterModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[var(--surface-secondary)] dark:bg-[var(--surface-secondary)] p-6 rounded-xl shadow-xl max-w-sm w-full">
-            <h3 className="text-lg font-bold mb-4">注册</h3>
-            <form onSubmit={handleRegister} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-primary)] mb-1">用户名</label>
-                <input
-                  type="text"
-                  value={registerForm.username}
-                  onChange={(e) => setRegisterForm({ ...registerForm, username: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-[var(--border-primary)] dark:border-[var(--border-primary)] bg-[var(--bg-tertiary)] dark:bg-[var(--bg-tertiary)] text-[var(--text-primary)] dark:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-secondary)]"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-primary)] mb-1">邮箱</label>
-                <input
-                  type="email"
-                  value={registerForm.email}
-                  onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-[var(--border-primary)] dark:border-[var(--border-primary)] bg-[var(--bg-tertiary)] dark:bg-[var(--bg-tertiary)] text-[var(--text-primary)] dark:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-secondary)]"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[var(--text-primary)] mb-1">密码</label>
-                <input
-                  type="password"
-                  value={registerForm.password}
-                  onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
-                  className="w-full px-4 py-2 rounded-xl border border-[var(--border-primary)] dark:border-[var(--border-primary)] bg-[var(--bg-tertiary)] dark:bg-[var(--bg-tertiary)] text-[var(--text-primary)] dark:text-[var(--text-primary)] focus:ring-2 focus:ring-[var(--accent-secondary)]"
-                  required
-                />
-              </div>
-              <button type="submit" className="w-full py-2 px-4 rounded-xl bg-[var(--accent-secondary)] text-white font-medium">
-                注册
-              </button>
-            </form>
-          </div>
-        </div>
+        <AuthModal
+          title="注册"
+          submitText="注册"
+          fields={[
+            { key: 'username', label: '用户名', type: 'text' },
+            { key: 'email', label: '邮箱', type: 'email' },
+            { key: 'password', label: '密码', type: 'password' },
+          ]}
+          form={registerForm}
+          onChange={setRegisterForm}
+          onSubmit={handleRegister}
+          onClose={() => setIsRegisterModalOpen(false)}
+        />
       )}
     </div>
   );

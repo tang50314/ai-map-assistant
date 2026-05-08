@@ -117,7 +117,6 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
         name="PlanningAgent",
         description="制定详细的旅行计划",
         model_client=model_client,
-        workbench=workbench,
         memory=memories,
         model_client_stream=True,
         system_message="""你是专业旅行规划师，基于 MapToolAgent 提供的高德 MCP 数据和用户偏好设计可执行详细行程。
@@ -147,13 +146,31 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
         name="EndAgent",
         description="判定任务是否完成并输出 TERMINATE",
         model_client=model_client,
-        workbench=workbench,
         memory=memories,
         system_message="""如果收到有效的 ResultAgent 输出，请输出 'TERMINATE'。
 如果任务不完整，则继续推进，不要随意结束。你只需要判断输出'TERMINATE'，不要做多余的事"""
     )
 
     return [preference_agent, map_tool_agent, planning_agent, result_agent, end_agent]
+
+def _travel_fallback_response(user_query: str, reason: str) -> str:
+    return f"""## 旅行规划暂时降级
+
+地图 MCP 服务本次响应不稳定，我先给出一版不依赖实时工具的可执行草案，避免你长时间等待后只看到报错。
+
+**你的需求**：{user_query}
+
+**建议你补充或确认**
+- 出发城市和目的地
+- 旅行天数
+- 交通方式
+- 偏好：自然风光 / 历史文化 / 美食 / 亲子 / 轻松休闲
+
+**可继续这样问**
+“我从上海出发去南京，自驾，2-3天，喜欢自然风光和历史文化，请给我每天行程、景点、餐饮和住宿区域。”
+
+> 降级原因：{reason}
+"""
 
 # 公共函数：创建记忆存储
 async def _create_memory_store(user_query: str, user_id: Optional[str] = None) -> List[Memory]:
@@ -235,8 +252,6 @@ async def _process_team_run(team: SelectorGroupChat, task: str, key_agents: List
 # 公共函数：清理资源
 async def _cleanup_resources(workbench, memories: List[Memory] | None = None):
     """清理资源"""
-    if workbench:
-        await workbench.stop()
     if memories:
         for memory in memories:
             await memory.close()
@@ -357,17 +372,17 @@ async def process_travel_query(user_query: str, conversation_id: int, db: Sessio
         task = _build_query_task(user_query, is_travel=True)
 
         # 处理团队运行结果
-        async for result in _process_team_run(team, task, ["PreferenceAgent", "PlanningAgent", "MapToolAgent", "ResultAgent", "EndAgent"]):
-            yield result
+        async with asyncio.timeout(180):
+            async for result in _process_team_run(team, task, ["PreferenceAgent", "PlanningAgent", "MapToolAgent", "ResultAgent", "EndAgent"]):
+                yield result
 
     except Exception as e:
-        error_msg = f"❌ 处理旅行规划时出错: {str(e)}"
+        error_msg = _travel_fallback_response(user_query, type(e).__name__)
         flush_print(error_msg)
-        yield {"content": error_msg, "agent": "ErrorAgent", "done": False}
+        yield {"content": error_msg, "agent": "ResultAgent", "type": "agent_output", "done": False}
         
     finally:
         try:
-            await workbench.stop()
             await conversation_memory.close()
         except Exception as cleanup_error:
             flush_print(f"清理资源时出错: {cleanup_error}")

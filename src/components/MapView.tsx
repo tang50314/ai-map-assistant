@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MapPin, ExternalLink, Loader2, MapIcon, Globe, QrCode } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
+import { API_ENDPOINTS } from '@/config/endpoints';
 
 interface MapViewProps {
   mapUrl: string | null;
@@ -45,7 +46,7 @@ const MapView: React.FC<MapViewProps> = ({
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
       
-      const response = await fetch('http://localhost:8003/map/generate/stream', {
+      const response = await fetch(API_ENDPOINTS.generation.mapStream, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

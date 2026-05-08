@@ -4,7 +4,7 @@ import Markdown from './Markdown';
 interface AgentMessageProps {
   content: string;
   agent?: string;
-  type?: 'initial' | 'preference' | 'final';
+  type?: string;
   thinkingProcess?: Array<{ agent: string; content: string }>;
   isStreaming?: boolean;
 }

@@ -25,6 +25,10 @@ class Conversation(Base):
     spa_task_id = Column(String, nullable=True)  # SPA任务ID，用于保存和重新加载HTML内容
     spa_content = Column(Text, nullable=True)  # 生成的HTML内容
     generated_code = Column(Text, nullable=True)  # 生成的代码内容
+    last_ai_response = Column(Text, nullable=True)  # 最近一次AI最终回复
+    map_task_id = Column(String, nullable=True)  # 马克地图任务ID
+    map_url = Column(Text, nullable=True)  # 马克地图URL
+    map_qr_code = Column(Text, nullable=True)  # 马克地图二维码
     owner = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
 

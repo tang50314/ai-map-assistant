@@ -3,6 +3,7 @@ import Home from "@/pages/Home";
 import { useState, useEffect } from "react";
 import { AuthContext } from '@/contexts/authContext';
 import { toast } from 'sonner';
+import { API_ENDPOINTS } from '@/config/endpoints';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -11,19 +12,45 @@ export default function App() {
     username: null as string | null,
   });
 
-  // Load auth state from localStorage on mount
+  // Load and validate auth state from localStorage on mount
   useEffect(() => {
     const savedAuth = localStorage.getItem('auth');
-    if (savedAuth) {
+    const savedToken = localStorage.getItem('token');
+    if (savedAuth && savedToken) {
       try {
         const authData = JSON.parse(savedAuth);
         if (authData.isAuthenticated && authData.user) {
-          setIsAuthenticated(true);
-          setUser(authData.user);
+          fetch(API_ENDPOINTS.auth.me, {
+            headers: {
+              Authorization: `Bearer ${savedToken}`,
+            },
+          })
+            .then(async (response) => {
+              if (!response.ok) {
+                throw new Error('Token expired');
+              }
+              const userData = await response.json();
+              setIsAuthenticated(true);
+              setUser({
+                id: userData.id.toString(),
+                username: userData.username,
+              });
+            })
+            .catch(() => {
+              localStorage.removeItem('auth');
+              localStorage.removeItem('token');
+              setIsAuthenticated(false);
+              setUser({ id: null, username: null });
+            });
         }
       } catch (error) {
         console.error('Error parsing auth data:', error);
+        localStorage.removeItem('auth');
+        localStorage.removeItem('token');
       }
+    } else {
+      localStorage.removeItem('auth');
+      localStorage.removeItem('token');
     }
   }, []);
 
@@ -52,7 +79,7 @@ export default function App() {
 
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
-      const response = await fetch('http://localhost:8001/token', {
+      const response = await fetch(API_ENDPOINTS.auth.token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -72,7 +99,7 @@ export default function App() {
       localStorage.setItem('token', data.access_token);
       
       // 获取用户信息
-      const userResponse = await fetch('http://localhost:8001/users/me', {
+      const userResponse = await fetch(API_ENDPOINTS.auth.me, {
         headers: {
           'Authorization': `Bearer ${data.access_token}`,
         },
@@ -100,7 +127,7 @@ export default function App() {
 
   const register = async (username: string, password: string, email: string): Promise<boolean> => {
     try {
-      const response = await fetch('http://localhost:8001/users/', {
+      const response = await fetch(API_ENDPOINTS.auth.users, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -128,7 +155,7 @@ export default function App() {
       console.error('Registration error:', error);
       // 更详细的错误信息
       if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
-        toast.error('无法连接到服务器，请确保后端服务已启动并运行在 http://localhost:8001');
+        toast.error('无法连接到服务器，请确保后端服务已启动');
       } else {
         toast.error('注册失败，请检查网络连接和后端服务状态');
       }

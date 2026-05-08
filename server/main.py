@@ -15,6 +15,20 @@ from teams import process_map_query
 from pydantic import BaseModel
 from models import Base, User, Conversation, Message, ModelConfig
 
+def load_local_env():
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for line in env_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+load_local_env()
+
 class ConversationOut(BaseModel):
     id: int
     title: str
@@ -24,6 +38,10 @@ class ConversationOut(BaseModel):
     spa_task_id: Optional[str] = None  # SPA任务ID
     spa_content: Optional[str] = None  # 生成的HTML内容
     generated_code: Optional[str] = None  # 生成的代码内容
+    last_ai_response: Optional[str] = None
+    map_task_id: Optional[str] = None
+    map_url: Optional[str] = None
+    map_qr_code: Optional[str] = None
 
 class MessageOut(BaseModel):
     id: int
@@ -44,6 +62,10 @@ class ConversationDetailOut(BaseModel):
     spa_task_id: Optional[str] = None  # SPA任务ID
     spa_content: Optional[str] = None  # 生成的HTML内容
     generated_code: Optional[str] = None  # 生成的代码内容
+    last_ai_response: Optional[str] = None
+    map_task_id: Optional[str] = None
+    map_url: Optional[str] = None
+    map_qr_code: Optional[str] = None
     messages: List[MessageOut]
 
 class ModelConfigOut(BaseModel):
@@ -59,19 +81,19 @@ app = FastAPI(title="AI地图助手后端服务", description="集成百度地�
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./sqlitedb/aimapassistant.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./sqlitedb/aimapassistant.db")
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-SECRET_KEY = "your-secret-key"
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -185,14 +207,21 @@ async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
 # 流式响应
+FINAL_ANSWER_AGENTS = {"ResultAgent", "GeneralAgent", "ErrorAgent"}
+
+def _sse_event(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
 async def handle_autogen_stream(content: str, conversation_id: int, db: Session, mode: str = "general", user_location: Optional[dict] = None):
     """
     纯粹的 Autogen 流式处理逻辑。
     根据对话模式选择对应的处理函数。
     """
-    full_response = ""
     thinking_process = []  # 存储思考过程
     final_result = ""
+    final_agent = "ResultAgent"
+    last_visible_content = ""
+    last_visible_agent = "ResultAgent"
     
     print(f"🤖 收到用户输入，模式: {mode}, 内容: {content}")
     
@@ -202,25 +231,14 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
             print(f"🎯 使用普通聊天代理处理")
             from teams import process_general_query
             async for chunk in process_general_query(content, conversation_id, db):
-                if chunk.get("agent") and chunk.get("content"):
-                    # 为ResultAgent启用逐字符流式输出，实现打字机效果
-                    if chunk["agent"] == "ResultAgent":
-                        # 逐字符发送，实现打字机效果
-                        for char in chunk["content"]:
-                            yield f"data: {json.dumps({'agent': chunk['agent'], 'content': char, 'type': 'agent_output', 'done': False})}\n\n"
-                            await asyncio.sleep(0.01)
-                    else:
-                        # 其他agent一次性发送
-                        yield f"data: {json.dumps({'agent': chunk['agent'], 'content': chunk['content'], 'type': 'agent_output', 'done': False})}\n\n"
-                    
-                    # 收集思考过程
-                    if chunk["agent"] != "ResultAgent":
-                        thinking_process.append({
-                            "agent": chunk["agent"],
-                            "content": chunk["content"]
-                        })
-                    else:
-                        final_result += chunk["content"]
+                chunk_content = chunk.get("content")
+                if chunk_content:
+                    agent = chunk.get("agent") or "GeneralAgent"
+                    final_agent = agent
+                    final_result += chunk_content
+                    last_visible_agent = agent
+                    last_visible_content = chunk_content
+                    yield _sse_event({'agent': agent, 'content': chunk_content, 'type': 'agent_output', 'done': False})
                         
                 if chunk.get("done"):
                     break
@@ -230,24 +248,27 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
             from teams import process_route_query
             async for chunk in process_route_query(content, conversation_id, db, user_location):
                 if chunk.get("agent") and chunk.get("content"):
-                    # 为ResultAgent启用逐字符流式输出，实现打字机效果
-                    if chunk["agent"] == "ResultAgent":
-                        # 逐字符发送，实现打字机效果
-                        for char in chunk["content"]:
-                            yield f"data: {json.dumps({'agent': chunk['agent'], 'content': char, 'type': 'agent_output', 'done': False})}\n\n"
-                            await asyncio.sleep(0.01)  # 控制打字速度
+                    agent = chunk["agent"]
+                    chunk_content = chunk["content"]
+                    last_visible_agent = agent
+                    last_visible_content = chunk_content
+
+                    if agent in FINAL_ANSWER_AGENTS:
+                        final_agent = agent
+                        final_result += chunk_content
                     else:
-                        # 其他agent一次性发送
-                        yield f"data: {json.dumps({'agent': chunk['agent'], 'content': chunk['content'], 'type': 'agent_output', 'done': False})}\n\n"
-                    
-                    # 收集思考过程
-                    if chunk["agent"] != "ResultAgent":
                         thinking_process.append({
-                            "agent": chunk["agent"],
-                            "content": chunk["content"]
+                            "agent": agent,
+                            "content": chunk_content
                         })
-                    else:
-                        final_result += chunk["content"]
+
+                    yield _sse_event({
+                        'agent': agent,
+                        'content': chunk_content,
+                        'type': chunk.get('type') or 'agent_output',
+                        'done': False,
+                        'is_final_answer': agent in FINAL_ANSWER_AGENTS
+                    })
                         
                 if chunk.get("done"):
                     break
@@ -257,24 +278,27 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
             from teams import process_travel_query
             async for chunk in process_travel_query(content, conversation_id, db):
                 if chunk.get("agent") and chunk.get("content"):
-                    # 为ResultAgent启用逐字符流式输出，实现打字机效果
-                    if chunk["agent"] == "ResultAgent":
-                        # 逐字符发送，实现打字机效果
-                        for char in chunk["content"]:
-                            yield f"data: {json.dumps({'agent': chunk['agent'], 'content': char, 'type': 'agent_output', 'done': False})}\n\n"
-                            await asyncio.sleep(0.01)  # 控制打字速度
+                    agent = chunk["agent"]
+                    chunk_content = chunk["content"]
+                    last_visible_agent = agent
+                    last_visible_content = chunk_content
+
+                    if agent in FINAL_ANSWER_AGENTS:
+                        final_agent = agent
+                        final_result += chunk_content
                     else:
-                        # 其他agent一次性发送
-                        yield f"data: {json.dumps({'agent': chunk['agent'], 'content': chunk['content'], 'type': 'agent_output', 'done': False})}\n\n"
-                    
-                    # 收集思考过程
-                    if chunk["agent"] != "ResultAgent":
                         thinking_process.append({
-                            "agent": chunk["agent"],
-                            "content": chunk["content"]
+                            "agent": agent,
+                            "content": chunk_content
                         })
-                    else:
-                        final_result += chunk["content"]
+
+                    yield _sse_event({
+                        'agent': agent,
+                        'content': chunk_content,
+                        'type': chunk.get('type') or 'agent_output',
+                        'done': False,
+                        'is_final_answer': agent in FINAL_ANSWER_AGENTS
+                    })
                         
                 if chunk.get("done"):
                     print(f"✅ 收到完成信号，final_result长度: {len(final_result)}, thinking_process数量: {len(thinking_process)}")
@@ -284,9 +308,9 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
             # 默认使用地图查询
             print(f"🎯 使用地图查询代理处理")
             final_result = await process_map_query(content)
-            for char in final_result:
-                yield f"data: {json.dumps({'content': char, 'type': 'simple_output', 'done': False})}\n\n"
-                await asyncio.sleep(0.005)  # 模拟流式延迟
+            final_agent = "ResultAgent"
+            last_visible_content = final_result
+            yield _sse_event({'agent': final_agent, 'content': final_result, 'type': 'agent_output', 'done': False, 'is_final_answer': True})
 
     except Exception as e:
         # 如果 Autogen 或 MCP 失败，直接返回错误信息
@@ -296,10 +320,9 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
         import traceback
         traceback.print_exc()
         
-        for char in error_message:
-            yield f"data: {json.dumps({'content': char, 'type': 'error', 'done': False})}\n\n"
-            await asyncio.sleep(0.005)
+        yield _sse_event({'agent': 'ErrorAgent', 'content': error_message, 'type': 'error', 'done': False, 'is_final_answer': True})
         final_result = error_message
+        final_agent = "ErrorAgent"
     
     finally:
         # 保存完整的AI响应到数据库
@@ -314,11 +337,14 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
                 if not display_content and thinking_process:
                     # 使用思考过程中的最后一个输出作为显示内容
                     display_content = thinking_process[-1]["content"]
+                if not display_content and last_visible_content:
+                    display_content = last_visible_content
+                    final_agent = last_visible_agent
                 if not display_content:
                     display_content = "无最终输出"
                 
                 # 确定agent类型：优先使用ResultAgent，如果没有则使用思考过程中的最后一个agent
-                agent_type = "ResultAgent" if final_result else None
+                agent_type = final_agent if final_result else None
                 if not agent_type and thinking_process:
                     agent_type = thinking_process[-1]["agent"]
                 
@@ -342,7 +368,8 @@ async def handle_autogen_stream(content: str, conversation_id: int, db: Session,
             print("⚠️ 没有内容需要保存")
         
         # 发送结束信号
-        yield f"data: {json.dumps({'content': '', 'type': 'final', 'done': True})}\n\n"
+        final_payload_content = final_result or last_visible_content
+        yield _sse_event({'agent': final_agent, 'content': final_payload_content, 'type': 'final', 'done': True})
 
 @app.post("/conversations/{conversation_id}/messages/stream/general/")
 async def stream_general_message(
@@ -444,6 +471,10 @@ async def get_conversation(conversation_id: int, current_user: User = Depends(ge
         spa_task_id=conversation.spa_task_id,
         spa_content=conversation.spa_content,
         generated_code=conversation.generated_code,
+        last_ai_response=conversation.last_ai_response,
+        map_task_id=conversation.map_task_id,
+        map_url=conversation.map_url,
+        map_qr_code=conversation.map_qr_code,
         messages=[MessageOut(
             id=msg.id,
             content=msg.content,
@@ -525,6 +556,43 @@ async def update_conversation_spa_content(conversation_id: int, spa_content_upda
     db.commit()
     return {"msg": "Conversation SPA content updated", "spa_content": conv.spa_content, "generated_code": conv.generated_code}
 
+@app.patch("/conversations/{conversation_id}/last-ai-response")
+async def update_conversation_last_ai_response(conversation_id: int, response_update: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """保存最近一次AI最终回复，供地图和网页生成使用"""
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.last_ai_response = response_update.get("last_ai_response") or ""
+    conv.updated_at = datetime.now()
+    db.commit()
+    return {"msg": "Conversation last AI response updated", "last_ai_response": conv.last_ai_response}
+
+@app.patch("/conversations/{conversation_id}/map-content")
+async def update_conversation_map_content(conversation_id: int, map_update: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """保存马克地图URL和二维码"""
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.map_url = map_update.get("map_url")
+    conv.map_qr_code = map_update.get("map_qr_code")
+    conv.updated_at = datetime.now()
+    db.commit()
+    return {"msg": "Conversation map content updated", "map_url": conv.map_url, "map_qr_code": conv.map_qr_code}
+
+@app.patch("/conversations/{conversation_id}/map-task")
+async def update_conversation_map_task(conversation_id: int, map_task_update: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """保存马克地图任务ID"""
+    conv = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conv.map_task_id = map_task_update.get("map_task_id")
+    conv.updated_at = datetime.now()
+    db.commit()
+    return {"msg": "Conversation map task ID updated", "map_task_id": conv.map_task_id}
+
 @app.get("/model-config/", response_model=ModelConfigOut)
 async def get_model_config(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     model_config = db.query(ModelConfig).filter(ModelConfig.user_id == current_user.id).first()
@@ -558,9 +626,27 @@ async def update_model_config(config: ModelConfigUpdate, current_user: User = De
 
 os.makedirs("./sqlitedb", exist_ok=True)
 
+def ensure_sqlite_columns():
+    if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+        return
+
+    columns = {
+        "last_ai_response": "TEXT",
+        "map_task_id": "VARCHAR",
+        "map_url": "TEXT",
+        "map_qr_code": "TEXT",
+    }
+
+    with engine.begin() as connection:
+        existing = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(conversations)").fetchall()}
+        for column_name, column_type in columns.items():
+            if column_name not in existing:
+                connection.exec_driver_sql(f"ALTER TABLE conversations ADD COLUMN {column_name} {column_type}")
+
 @app.on_event("startup")
 async def startup_event():
     Base.metadata.create_all(bind=engine)
+    ensure_sqlite_columns()
     print("数据库已初始化完成")
 
     db = SessionLocal()

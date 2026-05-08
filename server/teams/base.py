@@ -5,6 +5,20 @@ import sys
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.tools.mcp import McpWorkbench, SseServerParams
 
+def load_local_env():
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for line in env_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+load_local_env()
+
 # ---------------------
 # 高德 MCP Server Key
 # ---------------------
@@ -13,15 +27,15 @@ AMAP_MCP_KEY = os.getenv("AMAP_MCP_KEY", "REMOVED")
 # ---------------------
 # 百度地图 MCP Server Key
 # ---------------------
-BAIDU_MCP_KEY = os.getenv("BAIDU_MCP_KEY", "REMOVED")
+BAIDU_MCP_KEY = os.getenv("BAIDU_MCP_KEY") or os.getenv("BAIDU_MAPS_API_KEY", "REMOVED")
 
 # =====================
 # 模型客户端
 # =====================
 model_client = OpenAIChatCompletionClient(
     model="deepseek-ai/DeepSeek-V3",
-    api_key="REMOVEDwbrhdtkdwmpfyemxrcwmpcnkapjbzkhcdmyblvmczbckhpnr",
-    base_url="https://api.siliconflow.cn/v1/",
+    api_key=os.getenv("SILICONFLOW_API_KEY", "REMOVEDijurkbnvweiwokzylktemefybyatjfnkieyphppqvwcobpxf"),
+    base_url=os.getenv("MODEL_BASE_URL", "https://api.siliconflow.cn/v1/"),
     max_tokens=8000,
     model_info={
         "vision": False,

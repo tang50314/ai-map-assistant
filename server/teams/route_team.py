@@ -6,6 +6,7 @@ import uuid
 from typing import Dict, AsyncGenerator, Any, Optional, List
 from datetime import datetime
 import time
+import re
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.conditions import TextMentionTermination
 from autogen_agentchat.messages import TextMessage
@@ -78,7 +79,6 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
         name="RoutePlanner",
         description="解析用户路线需求信息",
         model_client=model_client,
-        workbench=workbench,
         memory=memories,
         model_client_stream=True,
         system_message="""你是一个专业的路线规划意图解析专家。
@@ -88,12 +88,16 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
 {
   "origin_address": "string or needs_current_location",
   "destination_address": "string",
-  "transport_mode": "driving|walking|bicycling|transit"
+  "transport_mode": "driving|walking|bicycling|transit",
+  "along_route_keywords": ["用户想顺路寻找的品牌/品类/POI关键词，例如 霸王茶姬、瑞幸、奶茶、咖啡、加油站、服务区"],
+  "scenic_preferences": ["自然风光", "历史文化", "美食", "亲子", "休息补给"]
 }
 
 注意：
 1. 若用户未给出起点，则输出 "needs_current_location" 作为 origin_address；
 2. 若用户明确指定交通方式则使用该方式，否则默认为最优方式；
+3. 如果用户说“沿途/路上/顺路/先去/途经/找一家/喝奶茶/买咖啡/加油/吃饭”，必须提取 along_route_keywords；
+4. 如果用户只说品类（如“奶茶店”），保留品类；如果用户说品牌（如“霸王茶姬”“瑞幸”），优先保留品牌；
 """
     )
 
@@ -107,7 +111,7 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
         model_client_stream=True,
         system_message="""你是高德 MCP Server 的地图工具专家。
 
-根据 RoutePlanner 输出的起点、终点和关键词（比如 "麦当劳"），
+根据 RoutePlanner 输出的起点、终点、交通方式、沿途停靠关键词和用户偏好，
 请按以下步骤使用 MCP 工具：
 
 1. 使用 maps_direction_driving_by_coordinates 或 maps_direction_driving_by_address:
@@ -117,23 +121,30 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
 2. 将返回路线中的关键坐标 (例如步骤中的经纬度点) 提取出来，遍历这些点调用：
    maps_around_search 或 maps_text_search：
    - maps_around_search:
-     输入: 每个节点的坐标和 keywords="麦当劳"
-     目的是获取该节点周边 POI。
+     输入: 每个节点的坐标和 keywords=RoutePlanner.along_route_keywords 中的关键词
+     目的是获取顺路停靠点 POI。
    - 若 maps_around_search 没有找到，则 fallback maps_text_search:
-     输入: "麦当劳" + 城市名 搜索附近
-   输出一定要包含每个找到的麦当劳的名称、详细地址、距离以及坐标等。
+     输入: 关键词 + 沿途城市名 搜索附近。
+   输出一定要包含每个找到的 POI 的名称、详细地址、距离、坐标、适合停靠的原因。
 
-3. 对 POI 结果进行去重合并（按距离优先），生成沿路麦当劳列表。
+3. 对 POI 结果进行去重合并，优先选择：
+   - 偏离主路线较少
+   - 靠近高速出入口/服务区/城市主干道
+   - 评分或知名度更高
+   - 与用户偏好更匹配
 
-请只返回真实 MCP 工具调用返回的 JSON 结构，和整理好的沿路 POI 信息，不要输出无关自然段。
+4. 如果用户没有 along_route_keywords，但有“自然风光/历史文化”等 scenic_preferences，则搜索沿途适合短暂停留的景点。
+
+请只返回真实 MCP 工具调用返回的 JSON 结构和整理好的沿路 POI 信息。不要编造 MCP 数据；如果工具失败，明确返回 tool_error 字段，并说明失败位置。
 
 示例结构：
 {
  "route": {... MCP route return ...},
  "pois_along_route": [
-   { "name":"麦当劳 XX店", "address":"...", "location":"lng,lat", "distance_to_route": ... },
+   { "keyword":"霸王茶姬", "name":"霸王茶姬 XX店", "address":"...", "location":"lng,lat", "distance_to_route": "...", "stop_reason":"偏离主线少，适合中途休息" },
    ...
- ]
+ ],
+ "tool_error": null
 }
 
 """
@@ -144,7 +155,6 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
         name="ResultAgent",
         description="整理地图工具返回的路线数据并输出用户可读路线卡",
         model_client=model_client,
-        workbench=workbench,
         memory=memories,
         model_client_stream=True,
         system_message="""你负责接收 MapTool 返回的 MCP JSON 路线规划数据，
@@ -155,7 +165,8 @@ async def create_agents(workbench, model_client, memories: List[Memory] | None =
 2. 交通方式
 3. 路线距离、时间
 4. 步骤指导（turn‑by‑turn，若 MCP 返回）
-5. 📍 从 起点（展示起点地名） 到 终点 的路线规划：
+5. 沿途顺路停靠推荐：如果 MapTool 返回 pois_along_route，要给出 2-5 个推荐点，说明适合什么时候停、为什么顺路、是否需要轻微绕行。
+6. 📍 从 起点（展示起点地名） 到 终点 的路线规划：
 🚶‍♀️ 步行路线（例）
 https://ditu.amap.com/dir?from[lnglat]={起点地名}&to[lnglat]={终点地名}&type=walk
 🚴‍♂️ 骑行路线（例）
@@ -168,6 +179,7 @@ https://ditu.amap.com/dir?from[lnglat]={起点地名}&to[lnglat]={终点地名}&
 
 如果是 “needs_current_location”，并且 MapTool 已用 maps_ip_location 获取了当前位置，经纬度可作为起点。
 不要生成无意义的解释段落，要结合结构化返回数据输出有用结果。
+如果 MapTool 返回 tool_error，不要把技术错误直接甩给用户，要给出可执行的降级建议和下一步可补充的信息。
 """
     )
 
@@ -176,13 +188,38 @@ https://ditu.amap.com/dir?from[lnglat]={起点地名}&to[lnglat]={终点地名}&
         name="EndAgent",
         description="确认任务完成并输出 TERMINATE",
         model_client=model_client,
-        workbench=workbench,
         memory=memories,
         model_client_stream=True,
         system_message="""收到 ResultAgent 的有效输出后，请输出 'TERMINATE' 结束流程，只输出终止标识，不做其他解释。"""
     )
 
     return [route_parser, map_tool_agent, result_agent, end_agent]
+
+def _has_explicit_origin(user_query: str) -> bool:
+    patterns = [
+        r"从.+?(出发|到|去|至)",
+        r"起点[是为:]?.+",
+        r"出发地[是为:]?.+",
+    ]
+    return any(re.search(pattern, user_query) for pattern in patterns)
+
+def _route_fallback_response(user_query: str, reason: str) -> str:
+    return f"""## 路线规划暂时降级
+
+地图 MCP 服务本次响应不稳定，系统没有继续等待到超时崩溃，而是先给出可执行的备用方案。
+
+**你的需求**：{user_query}
+
+**建议方案**
+- 如果是跨城自驾，先确认具体起点和终点，例如“上海人民广场 → 南京夫子庙”。
+- 上海到南京自驾通常可优先考虑沪蓉高速/G42方向，实际路线以实时导航为准。
+- 如果偏好自然风光和历史文化，可把中途停留点设置为苏州、无锡、镇江一带，再进入南京。
+
+**我建议你下一步这样问**
+“从上海人民广场自驾到南京夫子庙，沿途想看自然风光和历史文化，帮我规划2-3天路线。”
+
+> 降级原因：{reason}
+"""
 
 
 # 公共函数：创建记忆存储
@@ -191,12 +228,13 @@ async def _create_memory_store(user_query: str, user_id: Optional[str] = None, u
     memories = []
     if user_id:
         conversation_memory = ListMemory()
-        location_info = f" (用户位置: 纬度{user_location['latitude']}, 经度{user_location['longitude']})" if user_location else ""
+        should_use_location = user_location and not _has_explicit_origin(user_query)
+        location_info = f" (用户位置: 纬度{user_location['latitude']}, 经度{user_location['longitude']})" if should_use_location else ""
         await conversation_memory.add(
             MemoryContent(
                 content=f"用户查询: {user_query}{location_info}",
                 mime_type=MemoryMimeType.TEXT,
-                metadata={"type": "user_query", "user_id": user_id, "timestamp": datetime.now().isoformat(), "user_location": user_location}
+                metadata={"type": "user_query", "user_id": user_id, "timestamp": datetime.now().isoformat(), "user_location": user_location if should_use_location else None}
             )
         )
         memories.append(conversation_memory)
@@ -239,8 +277,6 @@ async def _process_team_run(team: SelectorGroupChat, task: str, key_agents: List
 # 公共函数：清理资源
 async def _cleanup_resources(workbench, memories: List[Memory] | None = None):
     """清理资源"""
-    if workbench:
-        await workbench.stop()
     if memories:
         for memory in memories:
             await memory.close()
@@ -342,12 +378,13 @@ async def process_route_query(user_query: str, conversation_id: int, db: Session
                 )
         
         # 添加当前查询和用户位置信息
-        location_info = f" (用户位置: 纬度{user_location['latitude']}, 经度{user_location['longitude']})" if user_location else ""
+        should_use_location = user_location and not _has_explicit_origin(user_query)
+        location_info = f" (用户位置: 纬度{user_location['latitude']}, 经度{user_location['longitude']})" if should_use_location else ""
         await conversation_memory.add(
             MemoryContent(
                 content=f"用户查询: {user_query}{location_info}",
                 mime_type=MemoryMimeType.TEXT,
-                metadata={"type": "user_query", "timestamp": datetime.now().isoformat(), "user_location": user_location}
+                metadata={"type": "user_query", "timestamp": datetime.now().isoformat(), "user_location": user_location if should_use_location else None}
             )
         )
         
@@ -363,22 +400,26 @@ async def process_route_query(user_query: str, conversation_id: int, db: Session
         task = f"""
         路线规划任务：{user_query}
         
+        重要约束：
+        - 如果用户明确写了“从某地出发”，以用户文本中的起点为准，不要改用浏览器定位。
+        - 浏览器定位只在用户没有给出起点时作为默认起点。
+        
         请按照完整流程规划路线：需求分析 → 地图查询 → 路线整理 → 最终输出
         系统会自动从对话记忆中提取相关的上下文信息。
         """
 
         # 处理团队运行结果
-        async for result in _process_team_run(team, task, ["RoutePlanner", "MapTool", "ResultAgent", "EndAgent"]):
-            yield result
+        async with asyncio.timeout(150):
+            async for result in _process_team_run(team, task, ["RoutePlanner", "MapTool", "ResultAgent", "EndAgent"]):
+                yield result
 
     except Exception as e:
-        error_msg = f"❌ 处理路线规划时出错: {str(e)}"
+        error_msg = _route_fallback_response(user_query, type(e).__name__)
         flush_print(error_msg)
-        yield {"content": error_msg, "agent": "ErrorAgent", "done": False}
+        yield {"content": error_msg, "agent": "ResultAgent", "type": "agent_output", "done": False}
         
     finally:
         try:
-            await workbench.stop()
             await conversation_memory.close()
         except Exception as cleanup_error:
             flush_print(f"清理资源时出错: {cleanup_error}")
