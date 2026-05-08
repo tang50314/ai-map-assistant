@@ -1,41 +1,44 @@
-
-
 import os
 import sys
+from dotenv import load_dotenv
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.tools.mcp import McpWorkbench, SseServerParams
 
-def load_local_env():
-    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-    if not os.path.exists(env_path):
-        return
-    with open(env_path, "r", encoding="utf-8") as env_file:
-        for line in env_file:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+# =====================
+# 加载环境变量
+# =====================
+from pathlib import Path
 
-load_local_env()
+# 自动定位项目根目录 .env
+env_path = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=env_path)
 
-# ---------------------
-# 高德 MCP Server Key
-# ---------------------
-AMAP_MCP_KEY = os.getenv("AMAP_MCP_KEY", "REMOVED")
 
-# ---------------------
-# 百度地图 MCP Server Key
-# ---------------------
-BAIDU_MCP_KEY = os.getenv("BAIDU_MCP_KEY") or os.getenv("BAIDU_MAPS_API_KEY", "REMOVED")
+def get_required_env(key: str) -> str:
+    """获取必须存在的环境变量"""
+    value = os.getenv(key)
+    if not value:
+        raise ValueError(f"缺少环境变量: {key}")
+    return value
+
+
+# =====================
+# API Keys
+# =====================
+AMAP_MCP_KEY = get_required_env("AMAP_MCP_KEY")
+BAIDU_MCP_KEY = get_required_env("BAIDU_MAPS_API_KEY")
+SILICONFLOW_API_KEY = get_required_env("SILICONFLOW_API_KEY")
+
+MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "https://api.siliconflow.cn/v1/")
+
 
 # =====================
 # 模型客户端
 # =====================
 model_client = OpenAIChatCompletionClient(
     model="deepseek-ai/DeepSeek-V3",
-    api_key=os.getenv("SILICONFLOW_API_KEY", "REMOVEDijurkbnvweiwokzylktemefybyatjfnkieyphppqvwcobpxf"),
-    base_url=os.getenv("MODEL_BASE_URL", "https://api.siliconflow.cn/v1/"),
+    api_key=SILICONFLOW_API_KEY,
+    base_url=MODEL_BASE_URL,
     max_tokens=8000,
     model_info={
         "vision": False,
@@ -47,20 +50,21 @@ model_client = OpenAIChatCompletionClient(
     }
 )
 
+
 def flush_print(*args, **kwargs):
     """确保输出立即显示"""
     print(*args, **kwargs)
     sys.stdout.flush()
 
+
 # =====================
-# MCP Workbench（高德 MCP SSE）
+# 高德 MCP Workbench
 # =====================
 async def create_mcp_workbench():
-    """创建高德 MCP Workbench 连接"""
     try:
         flush_print("🔄 正在连接高德 MCP Server...")
+
         server_params = SseServerParams(
-            # 注意：高德 MCP SSE 地址形式如下，key 是你在控制台申请的
             url=f"https://mcp.amap.com/sse?key={AMAP_MCP_KEY}",
             timeout=60,
             headers={
@@ -69,23 +73,26 @@ async def create_mcp_workbench():
                 "Connection": "keep-alive"
             }
         )
+
         workbench = McpWorkbench(server_params=server_params)
         await workbench.start()
+
         flush_print("✅ 高德 MCP Server 连接成功")
         return workbench
+
     except Exception as e:
         flush_print(f"❌ 连接高德 MCP Server 失败: {str(e)}")
         return None
+
 
 # =====================
 # 百度地图 MCP Workbench
 # =====================
 async def create_baidu_mcp_workbench():
-    """创建百度地图 MCP Workbench 连接"""
     try:
         flush_print("🔄 正在连接百度地图 MCP Server...")
+
         server_params = SseServerParams(
-            # 百度地图 MCP SSE 地址
             url=f"https://mcp.map.baidu.com/sse?ak={BAIDU_MCP_KEY}",
             timeout=60,
             headers={
@@ -94,52 +101,59 @@ async def create_baidu_mcp_workbench():
                 "Connection": "keep-alive"
             }
         )
+
         workbench = McpWorkbench(server_params=server_params)
         await workbench.start()
+
         flush_print("✅ 百度地图 MCP Server 连接成功")
         return workbench
+
     except Exception as e:
         flush_print(f"❌ 连接百度地图 MCP Server 失败: {str(e)}")
         return None
 
-# 缓存 MCP Workbench 实例
+
+# =====================
+# 缓存实例
+# =====================
 _mcp_workbench_cache = None
 _baidu_mcp_workbench_cache = None
 
+
 class CachedMcpWorkbench:
-    """包装 MCP Workbench 并管理状态"""
     def __init__(self, workbench):
         self.workbench = workbench
         self._stopped = False
 
     async def stop(self):
+        global _mcp_workbench_cache
+
         if not self._stopped and self.workbench:
             await self.workbench.stop()
             self._stopped = True
-            global _mcp_workbench_cache
             _mcp_workbench_cache = None
 
     def __getattr__(self, name):
         return getattr(self.workbench, name)
 
+
 async def get_mcp_workbench():
-    """获取 MCP Workbench 实例（缓存）"""
     global _mcp_workbench_cache
+
     if _mcp_workbench_cache is None:
         workbench = await create_mcp_workbench()
         if workbench:
             _mcp_workbench_cache = CachedMcpWorkbench(workbench)
-        else:
-            return None
+
     return _mcp_workbench_cache
 
+
 async def get_baidu_mcp_workbench():
-    """获取百度地图 MCP Workbench 实例（缓存）"""
     global _baidu_mcp_workbench_cache
+
     if _baidu_mcp_workbench_cache is None:
         workbench = await create_baidu_mcp_workbench()
         if workbench:
             _baidu_mcp_workbench_cache = CachedMcpWorkbench(workbench)
-        else:
-            return None
+
     return _baidu_mcp_workbench_cache
